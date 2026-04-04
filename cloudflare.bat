@@ -9,9 +9,9 @@ set HTTPS_PROXY=http://127.0.0.1:7890
 set TUNNEL_NAME=godotmcp
 
 :loop
-echo [%date% %time%] Starting Cloudflare Tunnel...
+echo [%date% %time%] Starting Cloudflare Tunnel with HTTP/2...
 
-cloudflare.exe tunnel run %TUNNEL_NAME%
+cloudflare.exe tunnel --protocol http2 run %TUNNEL_NAME%
 
 echo [%date% %time%] Tunnel stopped! Restarting in 5 seconds...
 timeout /t 5 >nul
