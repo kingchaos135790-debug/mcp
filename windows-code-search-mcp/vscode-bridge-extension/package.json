@@ -1,0 +1,167 @@
+{
+  "name": "windows-code-search-bridge",
+  "displayName": "Windows Code Search Bridge",
+  "description": "VS Code context window and editor bridge for windows-code-search-mcp.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*",
+    "onStartupFinished",
+    "onView:windowsCodeSearchBridge.contextView",
+    "onCommand:windowsCodeSearchBridge.pushNow",
+    "onCommand:windowsCodeSearchBridge.restartBridgeServer",
+    "onCommand:windowsCodeSearchBridge.setBridgePortAndRestart",
+    "onCommand:windowsCodeSearchBridge.addFiles",
+    "onCommand:windowsCodeSearchBridge.addFolder",
+    "onCommand:windowsCodeSearchBridge.addFolderSummary",
+    "onCommand:windowsCodeSearchBridge.addActiveEditor",
+    "onCommand:windowsCodeSearchBridge.addSelection",
+    "onCommand:windowsCodeSearchBridge.addOpenEditors"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "windowsCodeSearchBridge",
+          "title": "Code Search Bridge",
+          "icon": "media/bridge.svg"
+        }
+      ]
+    },
+    "views": {
+      "windowsCodeSearchBridge": [
+        {
+          "id": "windowsCodeSearchBridge.contextView",
+          "name": "Context Window",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "windowsCodeSearchBridge.pushNow",
+        "title": "Code Search Bridge: Push Context Now"
+      },
+      {
+        "command": "windowsCodeSearchBridge.restartBridgeServer",
+        "title": "Code Search Bridge: Restart Bridge Server"
+      },
+      {
+        "command": "windowsCodeSearchBridge.setBridgePortAndRestart",
+        "title": "Code Search Bridge: Set Bridge Port And Restart Server"
+      },
+      {
+        "command": "windowsCodeSearchBridge.addFiles",
+        "title": "Code Search Bridge: Add Files To Context Window"
+      },
+      {
+        "command": "windowsCodeSearchBridge.addFolder",
+        "title": "Code Search Bridge: Add Folder To Context Window"
+      },
+      {
+        "command": "windowsCodeSearchBridge.addFolderSummary",
+        "title": "Code Search Bridge: Add Folder Names To Context Window"
+      },
+      {
+        "command": "windowsCodeSearchBridge.addActiveEditor",
+        "title": "Code Search Bridge: Add Active Editor"
+      },
+      {
+        "command": "windowsCodeSearchBridge.addSelection",
+        "title": "Code Search Bridge: Add Current Selection"
+      },
+      {
+        "command": "windowsCodeSearchBridge.addOpenEditors",
+        "title": "Code Search Bridge: Add Open Editors"
+      },
+      {
+        "command": "windowsCodeSearchBridge.addResource",
+        "title": "Code Search Bridge: Add To Context Window"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "windowsCodeSearchBridge.addResource",
+          "when": "resourceScheme == file",
+          "group": "navigation@100"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "windowsCodeSearchBridge.addResource",
+          "when": "resourceScheme == file",
+          "group": "navigation@100"
+        }
+      ],
+      "tab/context": [
+        {
+          "command": "windowsCodeSearchBridge.addResource",
+          "when": "resourceScheme == file",
+          "group": "navigation@100"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Windows Code Search Bridge",
+      "properties": {
+        "windowsCodeSearchBridge.bridgeBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional full base URL for the local VS Code bridge. If set, it overrides bridgeHost and bridgePort."
+        },
+        "windowsCodeSearchBridge.bridgeHost": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Host of the local VS Code bridge started by windows-code-search-mcp."
+        },
+        "windowsCodeSearchBridge.bridgePort": {
+          "type": "number",
+          "default": 8876,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port of the local VS Code bridge started by windows-code-search-mcp. Change it at runtime, then run the restart command to apply it."
+        },
+        "windowsCodeSearchBridge.bridgeToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional X-Bridge-Token header value expected by the bridge server."
+        },
+        "windowsCodeSearchBridge.pollIntervalMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 500,
+          "description": "How often the extension polls for bridge commands."
+        },
+        "windowsCodeSearchBridge.autoPushDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically push diagnostics to the bridge when Problems change."
+        },
+        "windowsCodeSearchBridge.saveAfterApplyEdit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Save dirty files after a bridge edit is applied."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.4"
+  }
+}

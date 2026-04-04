@@ -1,0 +1,1 @@
+npx @modelcontextprotocol/inspector http://localhost:8000/mcp

@@ -1,0 +1,175 @@
+@echo off
+setlocal EnableExtensions
+
+set "MCP_DIR=E:\Program Files\mcp\windows-code-search-mcp"
+set "WINDOWS_MCP_DIR=E:\Program Files\mcp\Windows-MCP"
+set "SEARCH_ENGINE_DIR=E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp"
+set "QDRANT_ROOT=E:\Program Files\qdrant"
+set "QDRANT_EXE=%QDRANT_ROOT%\qdrant.exe"
+set "QDRANT_START_BAT=%QDRANT_ROOT%\start-qdrant.bat"
+set "QDRANT_CONFIG_PATH=%QDRANT_ROOT%\config\local.yaml"
+set "QDRANT_URL=http://127.0.0.1:16333"
+set "QDRANT_COLLECTION=code_chunks"
+set "INDEX_ROOT=E:\mcp-index-data"
+set "AUTO_INDEX_CONFIG_PATH=%MCP_DIR%\managed-repositories.json"
+set "PYTHON_EXE=%WINDOWS_MCP_DIR%\.venv\Scripts\python.exe"
+set "MCP_HOST=127.0.0.1"
+set "MCP_PORT=8000"
+set "VSCODE_BRIDGE_PORT=18876"
+set "MCP_LOG_DIR=%INDEX_ROOT%\logs"
+
+if "%FASTMCP_LOG_LEVEL%"=="" set "FASTMCP_LOG_LEVEL=DEBUG"
+if "%FASTMCP_ENABLE_RICH_LOGGING%"=="" set "FASTMCP_ENABLE_RICH_LOGGING=false"
+if "%FASTMCP_ENABLE_RICH_TRACEBACKS%"=="" set "FASTMCP_ENABLE_RICH_TRACEBACKS=false"
+set "PYTHONUNBUFFERED=1"
+set "PYTHONFAULTHANDLER=1"
+
+call :log "Starting Windows code search MCP for ChatGPT developer mode"
+call :log "ripgrep is preferred for lexical search on this machine; local lexical fallback remains available when ripgrep is unavailable"
+call :log "Transport: streamable-http"
+call :log "HTTP session mode: stateless"
+call :log "MCP host/port: %MCP_HOST%:%MCP_PORT%"
+call :log "VS Code bridge port: %VSCODE_BRIDGE_PORT%"
+call :log "FastMCP log level: %FASTMCP_LOG_LEVEL%"
+
+if not exist "%MCP_DIR%" (
+  call :log "ERROR: Integrated MCP folder not found: %MCP_DIR%"
+  pause
+  exit /b 1
+)
+
+if not exist "%WINDOWS_MCP_DIR%" (
+  call :log "ERROR: Windows-MCP folder not found: %WINDOWS_MCP_DIR%"
+  pause
+  exit /b 1
+)
+
+if not exist "%SEARCH_ENGINE_DIR%\package.json" (
+  call :log "ERROR: search engine package.json not found: %SEARCH_ENGINE_DIR%\package.json"
+  pause
+  exit /b 1
+)
+
+if not exist "%PYTHON_EXE%" (
+  call :log "ERROR: python.exe not found in Windows-MCP venv: %PYTHON_EXE%"
+  pause
+  exit /b 1
+)
+
+if not exist "%QDRANT_EXE%" (
+  call :log "ERROR: Qdrant executable not found: %QDRANT_EXE%"
+  pause
+  exit /b 1
+)
+
+if not exist "%QDRANT_CONFIG_PATH%" (
+  call :log "ERROR: Qdrant config not found: %QDRANT_CONFIG_PATH%"
+  pause
+  exit /b 1
+)
+
+if not exist "%QDRANT_START_BAT%" (
+  call :log "ERROR: Qdrant launcher not found: %QDRANT_START_BAT%"
+  pause
+  exit /b 1
+)
+
+rem ===== OAuth server-side config =====
+set "OAUTH_ENABLED=true"
+set "OAUTH_BASE_URL=https://mcp.laughman233.shop"
+
+rem Use the ChatGPT callback URL shown in the connector UI.
+set "OAUTH_REDIRECT_URIS=https://chatgpt.com/connector/oauth/IPM1eV066eQL"
+
+rem Your static client credentials for ChatGPT "User-Defined OAuth Client"
+set "OAUTH_CLIENT_ID=windows"
+set "OAUTH_CLIENT_SECRET=ls200126"
+
+rem Supported values: none, client_secret_post, client_secret_basic
+set "OAUTH_TOKEN_ENDPOINT_AUTH_METHOD=client_secret_post"
+
+rem Scopes ChatGPT should request / server should enforce
+set "OAUTH_REQUIRED_SCOPES=mcp:access"
+set "OAUTH_VALID_SCOPES=mcp:access,offline_access"
+
+rem Keep this false if you want only your one configured ChatGPT client.
+set "OAUTH_ALLOW_DYNAMIC_CLIENT_REGISTRATION=false"
+
+rem ===== Optional auto-index bootstrap =====
+rem Preload managed repositories on startup (comma-separated or one per line).
+rem Example:
+rem set "AUTO_INDEX_REPOS=E:\src\repo-one,E:\src\repo-two"
+rem set "AUTO_INDEX_REPOS_WATCH=true"
+rem set "AUTO_INDEX_REPOS_ON_START=true"
+rem set "AUTO_INDEX_WATCH_DEBOUNCE_MS=1600"
+
+set "WINDOWS_MCP_DIR=%WINDOWS_MCP_DIR%"
+set "SEARCH_ENGINE_DIR=%SEARCH_ENGINE_DIR%"
+set "QDRANT_URL=%QDRANT_URL%"
+set "QDRANT_COLLECTION=%QDRANT_COLLECTION%"
+set "INDEX_ROOT=%INDEX_ROOT%"
+set "AUTO_INDEX_CONFIG_PATH=%AUTO_INDEX_CONFIG_PATH%"
+set "VSCODE_BRIDGE_PORT=%VSCODE_BRIDGE_PORT%"
+rem Use stateless streamable-http so reconnecting MCP clients do not depend on
+rem in-memory session ids that can rotate and invalidate previously discovered
+rem tool namespaces mid-conversation.
+set "FASTMCP_STATELESS_HTTP=true"
+set "PYTHONPATH=%WINDOWS_MCP_DIR%\src;%MCP_DIR%"
+
+call :log "OAuth base URL: %OAUTH_BASE_URL%"
+call :log "Auto-index config: %AUTO_INDEX_CONFIG_PATH%"
+call :log "Search engine dir: %SEARCH_ENGINE_DIR%"
+call :log "Windows-MCP dir: %WINDOWS_MCP_DIR%"
+call :log "Qdrant URL: %QDRANT_URL%"
+
+call :log "Checking Qdrant at %QDRANT_URL%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$url='%QDRANT_URL%/collections'; $ok=$false; try { Invoke-WebRequest -UseBasicParsing $url | Out-Null; $ok=$true } catch {}; if (-not $ok) { Write-Host '[INFO] Qdrant is not reachable yet. Starting it now...'; Start-Process -FilePath '%QDRANT_START_BAT%' -WorkingDirectory '%QDRANT_ROOT%' -WindowStyle Minimized | Out-Null; }; for ($i = 0; $i -lt 15 -and -not $ok; $i++) { Start-Sleep -Seconds 2; try { Invoke-WebRequest -UseBasicParsing $url | Out-Null; $ok=$true } catch {} }; if ($ok) { Write-Host '[INFO] Qdrant is ready.'; Write-Host '[INFO] Qdrant storage: E:\mcp-index-data\qdrant\storage'; exit 0 } else { Write-Host '[ERROR] Qdrant could not be started after waiting for it to become reachable.'; exit 1 }"
+if errorlevel 1 (
+  call :log "ERROR: Qdrant is required for semantic search/indexing"
+  pause
+  exit /b 1
+)
+call :log "Qdrant readiness check completed"
+
+call :log "Checking whether the search engine core needs a rebuild"
+
+pushd "%SEARCH_ENGINE_DIR%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$dist='%SEARCH_ENGINE_DIR%\dist\cli\run-core.js'; $mustBuild=$false; if (-not (Test-Path $dist)) { $mustBuild=$true } else { $distTime=(Get-Item $dist).LastWriteTimeUtc; $sources=Get-ChildItem '%SEARCH_ENGINE_DIR%\src' -Recurse -File -ErrorAction SilentlyContinue; $extra=@('%SEARCH_ENGINE_DIR%\package.json','%SEARCH_ENGINE_DIR%\package-lock.json','%SEARCH_ENGINE_DIR%\tsconfig.json'); foreach ($path in $extra) { if (Test-Path $path) { $sources += Get-Item $path } }; foreach ($item in $sources) { if ($item.LastWriteTimeUtc -gt $distTime) { $mustBuild=$true; break } } }; if ($mustBuild) { Write-Host '[INFO] Building search engine core...'; exit 10 } else { Write-Host '[INFO] Search engine core is up to date. Skipping build.'; exit 0 }"
+set "BUILD_EXIT_CODE=%ERRORLEVEL%"
+if "%BUILD_EXIT_CODE%"=="10" (
+  call :log "Building search engine core with npm run build"
+  call npm run build
+  if errorlevel 1 (
+    call :log "ERROR: failed to build the search engine"
+    popd
+    pause
+    exit /b 1
+  )
+  call :log "Search engine core build completed"
+) else if not "%BUILD_EXIT_CODE%"=="0" (
+  call :log "ERROR: failed while checking whether the search engine core needs a rebuild"
+  popd
+  pause
+  exit /b 1
+)
+if "%BUILD_EXIT_CODE%"=="0" call :log "Search engine core is up to date"
+popd
+
+cd /d "%MCP_DIR%"
+call :log "Launching Python MCP server"
+"%PYTHON_EXE%" "%MCP_DIR%\server.py" --transport streamable-http --host %MCP_HOST% --port %MCP_PORT%
+set "SERVER_EXIT_CODE=%ERRORLEVEL%"
+
+if not "%SERVER_EXIT_CODE%"=="0" (
+  call :log "Windows code search MCP exited unexpectedly with code %SERVER_EXIT_CODE%"
+) else (
+  call :log "Windows code search MCP stopped cleanly"
+)
+pause
+exit /b %SERVER_EXIT_CODE%
+
+:log
+echo [%DATE% %TIME%] %~1
+exit /b 0
