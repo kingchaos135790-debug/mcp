@@ -197,3 +197,135 @@ Recommended MCP flow:
 
 You can also preload repos from the launcher with `AUTO_INDEX_REPOS`.
 
+## Authentication, restart behavior, and multi-chat isolation
+
+### Current authentication model
+
+The current OAuth provider is token-based, not connection-based, but the token state is held in server memory.
+
+Relevant implementation details:
+
+- `server_config.py` builds auth with `StaticClientOAuthProvider` when `OAUTH_CLIENT_ID` is configured
+- `Windows-MCP/src/windows_mcp/auth/static_oauth_provider.py` subclasses `InMemoryOAuthProvider`
+- `fastmcp.server.auth.providers.in_memory.InMemoryOAuthProvider` stores clients, authorization codes, access tokens, and refresh tokens in Python dictionaries in process memory
+
+Practical consequences:
+
+- bearer tokens are not tied to one TCP connection
+- a plain Cloudflare tunnel reconnect should not invalidate auth by itself if the Python server process stays alive and the public base URL is unchanged
+- a Python server restart recreates the OAuth provider and clears all in-memory authorization codes, access tokens, and refresh tokens
+- after a server restart, existing ChatGPT connector sessions should be expected to reauthenticate and can return `401 Unauthorized` until OAuth is completed again
+
+### Tunnel reconnects versus server restarts
+
+Observed behavior can look connection-based even though it is process-lifetime based.
+
+Use this rule of thumb:
+
+- tunnel reconnect only: auth should usually continue to work if the MCP server process did not restart
+- MCP server restart: reauthentication is expected with the current provider because token state is not persisted
+
+If restart-stable auth is required, replace the in-memory provider with a provider backed by persistent storage such as SQLite, Redis, or Postgres.
+
+### Concurrent access today
+
+The HTTP transport is configured for stateless streamable HTTP:
+
+- `FASTMCP_STATELESS_HTTP=true`
+
+This is good for reconnect behavior because clients do not depend on transport-level in-memory session ids that can rotate.
+
+However, the server runtime is still shared process-wide.
+
+`server_app.py` creates one shared:
+
+- `ServerContext`
+- `Desktop`
+- `WatchDog`
+- `RepositoryAutoIndexer`
+
+`server_runtime.py` adds some protection for shared mutating operations:
+
+- `_config_lock` serializes repo config updates
+- `_index_lock` serializes indexing runs
+
+Practical consequences:
+
+- multiple chat sessions can access the same MCP server concurrently
+- read-heavy search workflows are the safest for concurrent use
+- desktop automation, clipboard, active-window interactions, process operations, shell commands, and VS Code editing still operate on shared machine state and can interfere across chats
+- this is concurrent access, not per-chat runtime isolation
+
+### Per-chat isolation guidance
+
+Because the current transport is stateless HTTP, do not rely on in-memory connection or transport session ids as the isolation key.
+
+Use a stable identity derived from one of:
+
+- OAuth subject
+- token claims
+- an explicit session header injected by the connector
+- a signed session token
+
+That key must stay stable across requests.
+
+Recommended architecture:
+
+1. Keep search and indexing as shared infrastructure.
+   - Qdrant
+   - repo manifests
+   - lexical and semantic search
+   - repo add/remove/index operations guarded by locks
+2. Move interactive runtime state behind a per-chat or per-session runtime.
+   - desktop automation
+   - clipboard
+   - shell/process/window tools
+   - DOM-active browser scraping
+   - VS Code edit context
+3. Resolve the runtime from a stable authenticated session key on each request instead of storing one global interactive context for all callers.
+4. Add TTL cleanup for idle per-session runtimes.
+
+### Isolation options
+
+#### Option 1: one server worker per chat
+
+Best isolation and simplest reasoning model.
+
+Each chat gets its own worker process with its own runtime objects. This is the cleanest option if the system will be used by multiple chats concurrently for interactive tools.
+
+#### Option 2: one shared HTTP server with a per-session runtime registry
+
+Lower overhead, but requires more refactoring.
+
+Conceptually:
+
+```python
+contexts: dict[str, SessionRuntime]
+
+async def get_runtime(session_key: str) -> SessionRuntime:
+    runtime = contexts.get(session_key)
+    if runtime is None:
+        runtime = SessionRuntime(session_key)
+        contexts[session_key] = runtime
+    return runtime
+```
+
+Tool handlers should resolve runtime state from the current request identity instead of reading from one shared global `ServerContext.desktop` or similar singleton fields.
+
+#### Option 3: mixed model
+
+Use one shared server for read-only search tools and separate per-session workers only for interactive tools.
+
+This is usually the best tradeoff for this repository.
+
+### Recommended next refactor in this repo
+
+If refactoring incrementally, prefer this order:
+
+1. keep the existing shared search/indexing backend
+2. introduce a `SessionRuntimeManager` for interactive tools
+3. derive a stable session key from OAuth or connector-provided identity
+4. route interactive tools through session-scoped runtimes
+5. keep repo and search tools shared unless stronger isolation is needed later
+
+This avoids relying on transport connection state while making the most conflict-prone tools safe for concurrent multi-chat use.
