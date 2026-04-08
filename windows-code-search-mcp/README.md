@@ -55,6 +55,11 @@ MCP tools exposed for the bridge:
 - `request_vscode_edit`
 - `request_vscode_workspace_edit`
 - `open_vscode_file`
+Operational notes:
+
+- After MCP server restarts, prefer the canonical `/Windows MCP/...` tool paths for follow-up calls. Cached linked tool paths can briefly return `Resource not found` until the tool list refreshes.
+- For read-only VS Code bridge checks, use `list_vscode_sessions`, `get_vscode_diagnostics`, and `get_vscode_file_range` in that order when applicable.
+- If an edit fails because `expected_text` no longer matches or the bridge reports target drift, re-read the exact range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored change.
 
 What this enables:
 

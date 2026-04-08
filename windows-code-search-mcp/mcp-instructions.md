@@ -14,6 +14,8 @@ Use these behaviors by default:
 - If `expected_text` does not match, stop and re-locate the target instead of guessing.
 - Treat code search locations as hints for navigation and inspection, not as edit targets.
 - Do not assume search hits carry stable edit-ready line numbers by default.
+- After MCP server restarts, prefer canonical `/Windows MCP/...` tool paths for follow-up calls because cached linked tool paths can briefly return `Resource not found`.
+- If an edit fails because `expected_text` does not match or the target drifted, re-read the exact range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored change.
 
 Tool selection guidance:
 

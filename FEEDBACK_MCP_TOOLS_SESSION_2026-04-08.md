@@ -14,6 +14,21 @@ The tools used in this session included:
 - `PowerShell`
 - `FileSystem`
 
+## Updates after this session
+
+Partially addressed during the follow-up work in this repo:
+
+- Feedback item 2 (`request_vscode_edit` sensitivity to snapshot drift): the error-handling path was updated so drift-style failures such as `Could not reliably locate edit target after drift.` now return the same narrower-edit recovery guidance as `Expected text mismatch before applying edit.` A regression test was added for this case.
+- Feedback item 5 (error feedback not maximally actionable): the docs were updated to explicitly recommend re-reading with `get_vscode_file_range`, refreshing `expected_text`, and retrying with a narrower anchored change after mismatch/drift errors.
+- Feedback item 1 (resource path instability): the docs now explicitly note that after MCP restarts, callers should prefer canonical `/Windows MCP/...` paths because cached `/Windows MCP/link_<id>/...` paths can briefly return `Resource not found`.
+
+Still open:
+
+- Stable aliases or redirects for `/Windows MCP/link_<id>/...` paths.
+- A more tolerant anchor/patch edit mode for normal block edits.
+- Clearer raw-text or diff-oriented handling for Windows-path-heavy markdown.
+- Better ranking/fallback behavior for documentation-style search queries.
+
 ## What worked well
 
 - The Windows MCP tool suite made it possible to move from repo discovery to code search, code editing, runtime execution, and file writing without leaving the tool boundary.

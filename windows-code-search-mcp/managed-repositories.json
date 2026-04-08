@@ -38,7 +38,7 @@
       "watch": true,
       "auto_index_on_start": true,
       "last_indexed_at": "2026-04-06T06:22:12.993928Z",
-      "last_index_reason": "startup",
+      "last_index_reason": "watch",
       "last_result": {
         "repoId": "androidvisionrpa-f10a2223b5b3",
         "repoName": "AndroidVisionRPA",
@@ -102,7 +102,7 @@
       "watch": true,
       "auto_index_on_start": true,
       "last_indexed_at": "2026-04-04T14:24:02.726580Z",
-      "last_index_reason": "startup",
+      "last_index_reason": "watch",
       "last_result": {
         "repoId": "mcp-07c23e33c840",
         "repoName": "mcp",
@@ -134,7 +134,7 @@
       "watch": true,
       "auto_index_on_start": true,
       "last_indexed_at": "2026-04-06T09:32:25.525768Z",
-      "last_index_reason": "startup",
+      "last_index_reason": "watch",
       "last_result": {
         "repoId": "windows-code-search-mcp-80fbfdd19718",
         "repoName": "windows-code-search-mcp",
