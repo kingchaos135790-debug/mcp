@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -439,12 +439,40 @@ class VSCodeBridgeServer:
         edits: list[dict[str, Any]],
         timeout_seconds: float = 30,
     ) -> dict[str, Any]:
+        normalized_edits: list[dict[str, Any]] = []
+        for item in edits:
+            if not isinstance(item, dict):
+                continue
+            file_path = item.get("filePath") or item.get("file_path")
+            range_payload = item.get("range")
+            if not isinstance(range_payload, dict):
+                range_payload = {
+                    "startLine": item.get("startLine") or item.get("start_line"),
+                    "startColumn": item.get("startColumn") or item.get("start_column"),
+                    "endLine": item.get("endLine") or item.get("end_line"),
+                    "endColumn": item.get("endColumn") or item.get("end_column"),
+                }
+            normalized_item = dict(item)
+            if file_path:
+                normalized_item["filePath"] = _normalize_path(str(file_path))
+            normalized_item["range"] = {
+                "startLine": int(range_payload.get("startLine") or 1),
+                "startColumn": int(range_payload.get("startColumn") or 1),
+                "endLine": int(range_payload.get("endLine") or 1),
+                "endColumn": int(range_payload.get("endColumn") or 1),
+            }
+            if "newText" not in normalized_item and "new_text" in normalized_item:
+                normalized_item["newText"] = normalized_item.get("new_text")
+            if "expectedText" not in normalized_item and "expected_text" in normalized_item:
+                normalized_item["expectedText"] = normalized_item.get("expected_text")
+            normalized_edits.append(normalized_item)
+
         command = self.state.enqueue_command(
             session_id,
             "apply_workspace_edit",
             {
                 "label": label,
-                "edits": edits,
+                "edits": normalized_edits,
             },
         )
         return await asyncio.to_thread(self.state.wait_for_command, command, timeout_seconds)
@@ -609,3 +637,4 @@ class VSCodeBridgeServer:
                 logger.debug("VS Code bridge: " + format, *args)
 
         return Handler
+

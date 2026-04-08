@@ -1,4 +1,165 @@
 {
   "version": 1,
-  "repositories": []
+  "repositories": [
+    {
+      "repo_root": "E:\\GodotProject\\wasm",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-04T14:24:00.015155Z",
+      "last_index_reason": "startup",
+      "last_result": {
+        "repoId": "wasm-6a60eac63243",
+        "repoName": "wasm",
+        "repoRoot": "E:\\GodotProject\\wasm",
+        "indexedFiles": 282,
+        "changedFiles": 0,
+        "unchangedFiles": 282,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\wasm-6a60eac63243\\local-lexical-index.json",
+          "documents": 282
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    },
+    {
+      "repo_root": "E:\\Program Files\\AndroidVisionRPA",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-06T06:22:12.993928Z",
+      "last_index_reason": "startup",
+      "last_result": {
+        "repoId": "androidvisionrpa-f10a2223b5b3",
+        "repoName": "AndroidVisionRPA",
+        "repoRoot": "E:\\Program Files\\AndroidVisionRPA",
+        "indexedFiles": 10,
+        "changedFiles": 0,
+        "unchangedFiles": 10,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\androidvisionrpa-f10a2223b5b3\\local-lexical-index.json",
+          "documents": 10
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    },
+    {
+      "repo_root": "E:\\Program Files\\bt-hid-lua",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-04T14:14:21.010437Z",
+      "last_index_reason": "startup",
+      "last_result": {
+        "repoId": "bt-hid-lua-81096602efa7",
+        "repoName": "bt-hid-lua",
+        "repoRoot": "E:\\Program Files\\bt-hid-lua",
+        "indexedFiles": 0,
+        "changedFiles": 0,
+        "unchangedFiles": 0,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\bt-hid-lua-81096602efa7\\local-lexical-index.json",
+          "documents": 0
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    },
+    {
+      "repo_root": "E:\\Program Files\\mcp",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-04T14:24:02.726580Z",
+      "last_index_reason": "startup",
+      "last_result": {
+        "repoId": "mcp-07c23e33c840",
+        "repoName": "mcp",
+        "repoRoot": "E:\\Program Files\\mcp",
+        "indexedFiles": 122,
+        "changedFiles": 0,
+        "unchangedFiles": 122,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\mcp-07c23e33c840\\local-lexical-index.json",
+          "documents": 122
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    },
+    {
+      "repo_root": "E:\\Program Files\\mcp\\windows-code-search-mcp",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-06T09:32:25.525768Z",
+      "last_index_reason": "startup",
+      "last_result": {
+        "repoId": "windows-code-search-mcp-80fbfdd19718",
+        "repoName": "windows-code-search-mcp",
+        "repoRoot": "E:\\Program Files\\mcp\\windows-code-search-mcp",
+        "indexedFiles": 28,
+        "changedFiles": 0,
+        "unchangedFiles": 28,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\windows-code-search-mcp-80fbfdd19718\\local-lexical-index.json",
+          "documents": 28
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    }
+  ]
 }

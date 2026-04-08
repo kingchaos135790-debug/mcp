@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -708,16 +708,26 @@ class BridgeController {
         const edits = Array.isArray(payload.edits) ? payload.edits : [];
         const workspaceEdit = new vscode.WorkspaceEdit();
         for (const item of edits) {
-            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(String(item.filePath)));
-            const range = this.toRange(item.range);
-            const expectedText = String(item.expectedText ?? '');
+            const filePath = String(item.filePath ?? item.file_path ?? '');
+            if (!filePath) {
+                throw new Error('Workspace edit item is missing filePath.');
+            }
+            const rangePayload = item.range ?? {
+                startLine: item.startLine ?? item.start_line,
+                startColumn: item.startColumn ?? item.start_column,
+                endLine: item.endLine ?? item.end_line,
+                endColumn: item.endColumn ?? item.end_column,
+            };
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+            const range = this.toRange(rangePayload);
+            const expectedText = String(item.expectedText ?? item.expected_text ?? '');
             if (expectedText) {
                 const actual = document.getText(range);
                 if (actual !== expectedText) {
                     throw new Error(`Expected text mismatch before workspace edit in ${document.uri.fsPath}.`);
                 }
             }
-            workspaceEdit.replace(document.uri, range, String(item.newText ?? ''));
+            workspaceEdit.replace(document.uri, range, String(item.newText ?? item.new_text ?? ''));
         }
         const applied = await vscode.workspace.applyEdit(workspaceEdit);
         if (!applied) {
@@ -725,7 +735,11 @@ class BridgeController {
         }
         if (vscode.workspace.getConfiguration('windowsCodeSearchBridge').get('saveAfterApplyEdit', true)) {
             for (const item of edits) {
-                const document = await vscode.workspace.openTextDocument(vscode.Uri.file(String(item.filePath)));
+                const filePath = String(item.filePath ?? item.file_path ?? '');
+                if (!filePath) {
+                    continue;
+                }
+                const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
                 await document.save();
             }
         }
