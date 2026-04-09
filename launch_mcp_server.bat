@@ -1,6 +1,12 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
+set "MCP_ROOT=%~dp0"
+
+set "MCP_LAUNCHER_NAME=%~n0"
+
+if "%MCP_ROOT:~-1%"=="\" set "MCP_ROOT=%MCP_ROOT:~0,-1%"
+
 set "MCP_DIR=E:\Program Files\mcp\windows-code-search-mcp"
 set "WINDOWS_MCP_DIR=E:\Program Files\mcp\Windows-MCP"
 set "SEARCH_ENGINE_DIR=E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp"
@@ -16,11 +22,27 @@ set "PYTHON_EXE=%WINDOWS_MCP_DIR%\.venv\Scripts\python.exe"
 set "MCP_HOST=127.0.0.1"
 set "MCP_PORT=8000"
 set "VSCODE_BRIDGE_PORT=18876"
-set "MCP_LOG_DIR=%~dp0"
-if "%MCP_LOG_DIR:~-1%"=="\" set "MCP_LOG_DIR=%MCP_LOG_DIR:~0,-1%"
-set "MCP_BOOT_LOG=%MCP_LOG_DIR%\windows-code-search-mcp-launcher.log"
-set "MCP_STDIO_LOG=%MCP_LOG_DIR%\windows-code-search-mcp-stdio.log"
-set "MCP_RUNTIME_LOG=%MCP_LOG_DIR%\windows-code-search-mcp-runtime.log"
+set "MCP_LOG_DIR=%MCP_ROOT%\logs"
+if "%MCP_LOG_KEEP_COUNT%"=="" set "MCP_LOG_KEEP_COUNT=3"
+call :ensure_log_dir
+
+call :build_run_stamp
+
+set "MCP_BOOT_LOG=%MCP_LOG_DIR%\%MCP_LAUNCHER_NAME%-launcher-%LOG_RUN_STAMP%.log"
+set "MCP_STDIO_LOG=%MCP_LOG_DIR%\%MCP_LAUNCHER_NAME%-stdio-%LOG_RUN_STAMP%.log"
+set "MCP_RUNTIME_LOG=%MCP_LOG_DIR%\%MCP_LAUNCHER_NAME%-runtime-%LOG_RUN_STAMP%.log"
+
+type nul >> "%MCP_BOOT_LOG%"
+
+type nul >> "%MCP_STDIO_LOG%"
+
+type nul >> "%MCP_RUNTIME_LOG%"
+
+call :prune_logs "%MCP_LAUNCHER_NAME%-launcher-*.log"
+
+call :prune_logs "%MCP_LAUNCHER_NAME%-stdio-*.log"
+
+call :prune_logs "%MCP_LAUNCHER_NAME%-runtime-*.log"
 
 if "%FASTMCP_LOG_LEVEL%"=="" set "FASTMCP_LOG_LEVEL=DEBUG"
 if "%FASTMCP_ENABLE_RICH_LOGGING%"=="" set "FASTMCP_ENABLE_RICH_LOGGING=false"
@@ -29,6 +51,10 @@ set "PYTHONUNBUFFERED=1"
 set "PYTHONFAULTHANDLER=1"
 
 call :log "Starting Windows code search MCP for ChatGPT developer mode"
+
+call :log "Log directory: %MCP_LOG_DIR%"
+
+call :log "Log retention count: %MCP_LOG_KEEP_COUNT%"
 call :log "ripgrep is preferred for lexical search on this machine; local lexical fallback remains available when ripgrep is unavailable"
 call :log "Transport: streamable-http"
 call :log "HTTP session mode: stateless"
@@ -38,6 +64,7 @@ call :log "FastMCP log level: %FASTMCP_LOG_LEVEL%"
 call :log "Launcher log: %MCP_BOOT_LOG%"
 call :log "Python stdio log: %MCP_STDIO_LOG%"
 call :log "Python runtime log: %MCP_RUNTIME_LOG%"
+call :log "Python process output will be mirrored to the console and %MCP_STDIO_LOG%"
 
 if not exist "%MCP_DIR%" (
   call :log "ERROR: Integrated MCP folder not found: %MCP_DIR%"
@@ -163,7 +190,8 @@ call :log Server command: %PYTHON_EXE% %MCP_DIR%\server.py --transport streamabl
 where python >>"%MCP_STDIO_LOG%" 2>&1
 "%PYTHON_EXE%" -V >>"%MCP_STDIO_LOG%" 2>&1
 cmd /c "netstat -ano | findstr /R /C:":%MCP_PORT% .*LISTENING" /C:":%VSCODE_BRIDGE_PORT% .*LISTENING"" >>"%MCP_STDIO_LOG%" 2>&1
-"%PYTHON_EXE%" "%MCP_DIR%\server.py" --transport streamable-http --host %MCP_HOST% --port %MCP_PORT% 1>>"%MCP_STDIO_LOG%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Continue'; & '%PYTHON_EXE%' '%MCP_DIR%\server.py' --transport streamable-http --host '%MCP_HOST%' --port '%MCP_PORT%' 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } } | Tee-Object -FilePath '%MCP_STDIO_LOG%' -Append; $exitCode=$LASTEXITCODE; exit $exitCode"
 set "SERVER_EXIT_CODE=%ERRORLEVEL%"
 if "%SERVER_EXIT_CODE%"=="0" (
   call :log "Windows code search MCP stopped cleanly"
@@ -184,6 +212,40 @@ if not exist "%PYTHON_EXE%" (
   exit /b %SERVER_EXIT_CODE%
 )
 goto server_loop
+
+
+
+:ensure_log_dir
+
+if not exist "%MCP_LOG_DIR%" mkdir "%MCP_LOG_DIR%" >nul 2>&1
+
+exit /b 0
+
+
+
+:build_run_stamp
+
+set "LOG_RUN_STAMP="
+
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date).ToString('yyyyMMdd-HHmmss-fff')"`) do set "LOG_RUN_STAMP=%%I"
+
+if not defined LOG_RUN_STAMP set "LOG_RUN_STAMP=run-%RANDOM%-%RANDOM%"
+
+exit /b 0
+
+
+
+:prune_logs
+
+set "LOG_PATTERN=%~1"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+
+  "$logDir='%MCP_LOG_DIR%'; $pattern='%LOG_PATTERN%'; try { $keep=[int]'%MCP_LOG_KEEP_COUNT%' } catch { $keep=10 }; if ($keep -lt 1) { $keep=1 }; Get-ChildItem -Path $logDir -Filter $pattern -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -Skip $keep | Remove-Item -Force -ErrorAction SilentlyContinue"
+
+set "LOG_PATTERN="
+
+exit /b 0
 
 :detect_listener_pid
 set "MCP_LISTENER_PID="

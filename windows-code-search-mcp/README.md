@@ -1,4 +1,4 @@
-# windows-code-search-mcp
+﻿# windows-code-search-mcp
 
 Single MCP server that combines:
 
@@ -140,6 +140,7 @@ Development and packaging:
 - exports `QDRANT_URL`, `QDRANT_COLLECTION`, and `INDEX_ROOT`
 - sets `INDEX_ROOT=E:\\mcp-index-data` for search manifests and local lexical indexes
 - builds the TypeScript search core before starting the Python MCP host
+- logs runtime diagnostics to the console, and to `windows-code-search-mcp-runtime.log` when `MCP_LOG_DIR` is set
 - logs startup index status for each managed repository, including incremental `changedFiles`, `unchangedFiles`, and `deletedFiles`
 
 ## Search engine bridge
@@ -160,6 +161,7 @@ The integrated MCP exposes these search-side tools:
 - `server_health`
 - `list_indexed_repositories`
 - `index_repository`
+- `remove_indexed_repository`
 - `list_auto_index_repositories`
 - `add_auto_index_repository`
 - `remove_auto_index_repository`

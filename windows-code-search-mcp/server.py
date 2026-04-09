@@ -39,23 +39,40 @@ def configure_http_runtime(transport: str, host: str, port: int) -> None:
 def configure_process_diagnostics() -> tuple[str, str | None]:
     boot_id = uuid.uuid4().hex[:12]
     log_dir_text = os.getenv('MCP_LOG_DIR', '').strip()
-    if not log_dir_text:
-        return boot_id, None
-
-    log_dir = Path(log_dir_text).expanduser()
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / 'windows-code-search-mcp-runtime.log'
+    runtime_log_text = os.getenv('MCP_RUNTIME_LOG', '').strip()
     root_logger = logging.getLogger()
-    file_path_text = str(log_path.resolve())
-    has_file_handler = any(
-        isinstance(handler, logging.FileHandler) and getattr(handler, 'baseFilename', '') == file_path_text
+    configured_level = str(os.getenv('FASTMCP_LOG_LEVEL', 'INFO')).upper()
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+
+    has_console_handler = any(
+        isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler)
         for handler in root_logger.handlers
     )
-    if not has_file_handler:
-        handler = logging.FileHandler(log_path, encoding='utf-8')
-        handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
-        root_logger.addHandler(handler)
-    configured_level = str(os.getenv('FASTMCP_LOG_LEVEL', 'INFO')).upper()
+    if not has_console_handler:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+
+    log_path: Path | None = None
+    if runtime_log_text:
+        log_path = Path(runtime_log_text).expanduser()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    elif log_dir_text:
+        log_dir = Path(log_dir_text).expanduser()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / 'windows-code-search-mcp-runtime.log'
+
+    if log_path is not None:
+        file_path_text = str(log_path.resolve())
+        has_file_handler = any(
+            isinstance(handler, logging.FileHandler) and getattr(handler, 'baseFilename', '') == file_path_text
+            for handler in root_logger.handlers
+        )
+        if not has_file_handler:
+            file_handler = logging.FileHandler(log_path, encoding='utf-8')
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+
     if root_logger.level in (logging.NOTSET, 0):
         root_logger.setLevel(getattr(logging, configured_level, logging.INFO))
 
@@ -78,7 +95,7 @@ def configure_process_diagnostics() -> tuple[str, str | None]:
 
     atexit.register(_log_shutdown)
     sys.excepthook = _log_unhandled_exception
-    return boot_id, str(log_path)
+    return boot_id, str(log_path) if log_path else None
 
 
 @click.command()
