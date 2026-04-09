@@ -13,6 +13,7 @@ Starter VS Code extension that connects to `windows-code-search-mcp` through the
 - add active editor, selection, or all open editors into the context set
 - push current VS Code diagnostics to the MCP bridge
 - poll bridge commands so the MCP server can open files and apply edits through the VS Code API
+- return edit mismatch diagnostics with file path, compared range, and truncated `expected` and `actual` text previews for both single-edit and workspace-edit requests
 
 ## Usage
 
@@ -36,6 +37,9 @@ Notes:
 
 - drag text works best; for files, use `Add Files...` or the context-menu command because webview file drag payloads are inconsistent in VS Code
 - the webview shows success/warning/error notices after drops and sync actions
+- if `request_vscode_edit` or `request_vscode_workspace_edit` fails with an expected-text mismatch, re-read the target range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored edit
+- mismatch errors now include the file path, compared range, and shortened `expected` and `actual` previews so drift recovery can be done without guesswork
+- after changing extension bridge code on disk, reload the VS Code window or restart the extension host so the running bridge picks up the updated `src/out` files
 
 ## Settings
 

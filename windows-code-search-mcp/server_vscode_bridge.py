@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import asyncio
 import json
 import logging
+import uuid
 
 from server_config import Config
 
@@ -158,6 +159,44 @@ class VSCodeBridgeState:
             if session is None:
                 return None
             return session.to_snapshot()
+
+    def create_session(self, session_id: str = "", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        session_payload = payload if isinstance(payload, dict) else {}
+        requested_session_id = str(session_id or session_payload.get("sessionId") or "").strip()
+        normalized_session_id = requested_session_id or f"mcp-{uuid.uuid4().hex[:10]}"
+
+        with self._lock:
+            self._prune_stale_sessions_locked()
+            if normalized_session_id in self._sessions:
+                raise ValueError(f"VS Code session already exists: {normalized_session_id}")
+            session = VSCodeSession(session_id=normalized_session_id)
+            session.workspace_root = _normalize_path(str(session_payload.get("workspaceRoot", "")))
+            session.workspace_name = str(session_payload.get("workspaceName", ""))
+            session.active_file = _normalize_path(str(session_payload.get("activeFile", "")))
+            self._touch_session(session)
+            self._sessions[normalized_session_id] = session
+            return session.to_snapshot()
+
+    def close_session(self, session_id: str) -> dict[str, Any]:
+        normalized_session_id = session_id.strip()
+        if not normalized_session_id:
+            raise ValueError("session_id is required")
+
+        with self._lock:
+            self._prune_stale_sessions_locked()
+            session = self._sessions.pop(normalized_session_id, None)
+            if session is None:
+                raise KeyError(f"Unknown session: {normalized_session_id}")
+            pending_command_count = sum(1 for command in session.pending_commands.values() if command.result is None)
+            return {
+                "sessionId": normalized_session_id,
+                "closed": True,
+                "pendingCommandCount": pending_command_count,
+                "workspaceRoot": session.workspace_root,
+                "workspaceName": session.workspace_name,
+                "activeFile": session.active_file,
+                "closedAt": _now_iso(),
+            }
 
     def get_context_items(self, session_id: str) -> list[dict[str, Any]]:
         with self._lock:

@@ -1,0 +1,49 @@
+============================================================
+[2026/04/10 周五  0:55:21.71] Launch attempt 1
+Working directory: E:\Program Files\mcp\windows-code-search-mcp
+Python executable: E:\Program Files\mcp\Windows-MCP\.venv\Scripts\python.exe
+Command: "E:\Program Files\mcp\Windows-MCP\.venv\Scripts\python.exe" "E:\Program Files\mcp\windows-code-search-mcp\server.py" --transport streamable-http --host 127.0.0.1 --port 8000
+D:\Python\python.exe
+C:\Users\14559\AppData\Local\Microsoft\WindowsApps\python.exe
+E:\Software\Anaconda3\python.exe
+Python 3.13.12
+[INFO] Process ID : 29136
+[INFO] Boot ID : 8acd0be7179d
+[INFO] Runtime log : E:\Program Files\mcp\windows-code-search-mcp-runtime.log
+[INFO] FastMCP log level : DEBUG
+[INFO] Streamable HTTP path : /mcp
+[INFO] Streamable HTTP stateless : True
+[INFO] Search tools : semantic_code_search, lexical_code_search, hybrid_code_search, server_health, list_indexed_repositories, index_repository, remove_indexed_repository, list_auto_index_repositories, add_auto_index_repository, remove_auto_index_repository
+[INFO] VS Code tools : create_vscode_session, close_vscode_session, list_vscode_sessions, get_vscode_session, get_vscode_context, get_vscode_context_summary, get_vscode_file_range, get_vscode_diagnostics, request_vscode_edit, request_vscode_workspace_edit, safe_vscode_edit, open_vscode_file
+[INFO] Auto-index config : E:\Program Files\mcp\windows-code-search-mcp\managed-repositories.json
+[INFO] VS Code bridge : http://127.0.0.1:18876
+INFO: Starting MCP server 'windows-code-search-mcp' with transport 'streamable-http' (stateless) on http://127.0.0.1:8000/mcp
+INFO:     Started server process [29136]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+============================================================
+[2026/04/10 周五  0:56:26.90] Launch attempt 1
+Working directory: E:\Program Files\mcp\windows-code-search-mcp
+Python executable: E:\Program Files\mcp\Windows-MCP\.venv\Scripts\python.exe
+Command: "E:\Program Files\mcp\Windows-MCP\.venv\Scripts\python.exe" "E:\Program Files\mcp\windows-code-search-mcp\server.py" --transport streamable-http --host 127.0.0.1 --port 8000
+D:\Python\python.exe
+C:\Users\14559\AppData\Local\Microsoft\WindowsApps\python.exe
+E:\Software\Anaconda3\python.exe
+Python 3.13.12
+[INFO] Process ID : 11996
+[INFO] Boot ID : 3ec286f50d15
+[INFO] Runtime log : E:\Program Files\mcp\windows-code-search-mcp-runtime.log
+[INFO] FastMCP log level : DEBUG
+[INFO] Streamable HTTP path : /mcp
+[INFO] Streamable HTTP stateless : True
+[INFO] Search tools : semantic_code_search, lexical_code_search, hybrid_code_search, server_health, list_indexed_repositories, index_repository, remove_indexed_repository, list_auto_index_repositories, add_auto_index_repository, remove_auto_index_repository
+[INFO] VS Code tools : create_vscode_session, close_vscode_session, list_vscode_sessions, get_vscode_session, get_vscode_context, get_vscode_context_summary, get_vscode_file_range, get_vscode_diagnostics, request_vscode_edit, request_vscode_workspace_edit, safe_vscode_edit, open_vscode_file
+[INFO] Auto-index config : E:\Program Files\mcp\windows-code-search-mcp\managed-repositories.json
+[INFO] VS Code bridge : http://127.0.0.1:18876
+INFO: Starting MCP server 'windows-code-search-mcp' with transport 'streamable-http' (stateless) on http://127.0.0.1:8000/mcp
+INFO:     Started server process [11996]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     64.118.152.53:0 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK

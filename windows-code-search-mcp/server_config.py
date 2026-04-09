@@ -4,11 +4,132 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import os
+import json
+import logging
+from threading import RLock
+
+from mcp.server.auth.provider import AccessToken, AuthorizationCode, RefreshToken
+from mcp.shared.auth import OAuthClientInformationFull
+
 
 import bootstrap  # noqa: F401
 
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
 from windows_mcp.auth import StaticClientOAuthProvider
+
+LOGGER = logging.getLogger(__name__)
+
+
+class _PersistentOAuthStateMixin:
+    def _init_persistence(self, storage_path: str | Path) -> None:
+        self._storage_path = Path(storage_path).expanduser().resolve()
+        self._state_lock = RLock()
+        self._load_state()
+
+    def _serialize_models(self, values: dict[str, object]) -> dict[str, object]:
+        return {
+            key: value.model_dump(mode="json")
+            for key, value in values.items()
+        }
+
+    def _deserialize_models(self, values: dict[str, object], model_cls):
+        return {
+            key: model_cls.model_validate(value)
+            for key, value in values.items()
+        }
+
+    def _persist_state(self) -> None:
+        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self._storage_path.with_suffix(self._storage_path.suffix + ".tmp")
+        payload = {
+            "version": 1,
+            "clients": self._serialize_models(self.clients),
+            "auth_codes": self._serialize_models(self.auth_codes),
+            "access_tokens": self._serialize_models(self.access_tokens),
+            "refresh_tokens": self._serialize_models(self.refresh_tokens),
+            "access_to_refresh_map": dict(self._access_to_refresh_map),
+            "refresh_to_access_map": dict(self._refresh_to_access_map),
+        }
+        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(self._storage_path)
+
+    def _load_state(self) -> None:
+        if not self._storage_path.exists():
+            return
+        try:
+            payload = json.loads(self._storage_path.read_text(encoding="utf-8"))
+            self.clients = self._deserialize_models(payload.get("clients", {}), OAuthClientInformationFull)
+            self.auth_codes = self._deserialize_models(payload.get("auth_codes", {}), AuthorizationCode)
+            self.access_tokens = self._deserialize_models(payload.get("access_tokens", {}), AccessToken)
+            self.refresh_tokens = self._deserialize_models(payload.get("refresh_tokens", {}), RefreshToken)
+            self._access_to_refresh_map = {str(k): str(v) for k, v in payload.get("access_to_refresh_map", {}).items()}
+            self._refresh_to_access_map = {str(k): str(v) for k, v in payload.get("refresh_to_access_map", {}).items()}
+        except Exception as exc:
+            LOGGER.warning("Failed to load OAuth state from %s: %s", self._storage_path, exc)
+
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        await super().register_client(client_info)
+        self._persist_state()
+
+    async def authorize(self, client: OAuthClientInformationFull, params):
+        redirect_uri = await super().authorize(client, params)
+        self._persist_state()
+        return redirect_uri
+
+    async def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str):
+        had_code = authorization_code in self.auth_codes
+        result = await super().load_authorization_code(client, authorization_code)
+        if had_code and authorization_code not in self.auth_codes:
+            self._persist_state()
+        return result
+
+    async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code):
+        token = await super().exchange_authorization_code(client, authorization_code)
+        self._persist_state()
+        return token
+
+    async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str):
+        had_token = refresh_token in self.refresh_tokens
+        result = await super().load_refresh_token(client, refresh_token)
+        if had_token and refresh_token not in self.refresh_tokens:
+            self._persist_state()
+        return result
+
+    async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token, scopes: list[str]):
+        token = await super().exchange_refresh_token(client, refresh_token, scopes)
+        self._persist_state()
+        return token
+
+    async def load_access_token(self, token: str):  # type: ignore[override]
+        had_token = token in self.access_tokens
+        result = await super().load_access_token(token)
+        if had_token and token not in self.access_tokens:
+            self._persist_state()
+        return result
+
+    async def revoke_token(self, token) -> None:
+        await super().revoke_token(token)
+        self._persist_state()
+
+
+class PersistentInMemoryOAuthProvider(_PersistentOAuthStateMixin, InMemoryOAuthProvider):
+    def __init__(self, *, storage_path: str | Path, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._init_persistence(storage_path)
+
+
+class PersistentStaticClientOAuthProvider(_PersistentOAuthStateMixin, StaticClientOAuthProvider):
+    def __init__(self, *, storage_path: str | Path, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._init_persistence(storage_path)
+
+    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        had_client = client_id in self.clients
+        client = await super().get_client(client_id)
+        if client is not None and not had_client and client_id in self.clients:
+            self._persist_state()
+        return client
+
 
 
 SEARCH_TOOL_NAMES = [
@@ -25,6 +146,8 @@ SEARCH_TOOL_NAMES = [
 ]
 
 VSCODE_TOOL_NAMES = [
+    "create_vscode_session",
+    "close_vscode_session",
     "list_vscode_sessions",
     "get_vscode_session",
     "get_vscode_context",
@@ -33,6 +156,7 @@ VSCODE_TOOL_NAMES = [
     "get_vscode_diagnostics",
     "request_vscode_edit",
     "request_vscode_workspace_edit",
+    "safe_vscode_edit",
     "open_vscode_file",
 ]
 
@@ -66,6 +190,7 @@ class Config:
     oauth_token_endpoint_auth_method: str = field(default="client_secret_post")
     oauth_valid_scopes: list[str] = field(default_factory=list)
     oauth_allow_dynamic_client_registration: bool = field(default=False)
+    oauth_state_path: str = field(default="")
     vscode_bridge_enabled: bool = field(default=True)
     vscode_bridge_host: str = field(default="127.0.0.1")
     vscode_bridge_port: int = field(default=8876)
@@ -184,6 +309,10 @@ def build_config(host: str, port: int) -> Config:
             os.getenv("OAUTH_ALLOW_DYNAMIC_CLIENT_REGISTRATION"),
             False,
         ),
+        oauth_state_path=os.getenv(
+            "OAUTH_STATE_PATH",
+            str(server_root() / "oauth-state.json"),
+        ).strip(),
         vscode_bridge_enabled=parse_bool(os.getenv("VSCODE_BRIDGE_ENABLED"), True),
         vscode_bridge_host=os.getenv("VSCODE_BRIDGE_HOST", "127.0.0.1").strip() or "127.0.0.1",
         vscode_bridge_port=int(os.getenv("VSCODE_BRIDGE_PORT", "8876")),
@@ -199,7 +328,8 @@ def build_auth(config: Config):
         raise ValueError("OAuth is enabled but OAUTH_BASE_URL is missing")
 
     if config.oauth_client_id:
-        return StaticClientOAuthProvider(
+        return PersistentStaticClientOAuthProvider(
+            storage_path=config.oauth_state_path,
             base_url=config.oauth_base_url,
             pre_registered_client_id=config.oauth_client_id,
             pre_registered_client_secret=config.oauth_client_secret or None,
@@ -210,7 +340,8 @@ def build_auth(config: Config):
             required_scopes=config.oauth_required_scopes or None,
         )
 
-    return InMemoryOAuthProvider(
+    return PersistentInMemoryOAuthProvider(
+        storage_path=config.oauth_state_path,
         base_url=config.oauth_base_url,
         required_scopes=config.oauth_required_scopes or None,
     )

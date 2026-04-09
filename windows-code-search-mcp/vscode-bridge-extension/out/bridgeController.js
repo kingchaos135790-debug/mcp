@@ -687,7 +687,7 @@ class BridgeController {
         if (expectedText) {
             const actual = document.getText(range);
             if (actual !== expectedText) {
-                throw new Error('Expected text mismatch before applying edit.');
+                throw new Error(`Expected text mismatch before applying edit. file=${document.uri.fsPath} range=${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1} expected=${JSON.stringify(expectedText.length > 200 ? `${expectedText.slice(0, 200)}...` : expectedText)} actual=${JSON.stringify(actual.length > 200 ? `${actual.slice(0, 200)}...` : actual)}`);
             }
         }
         const edit = new vscode.WorkspaceEdit();
@@ -724,7 +724,7 @@ class BridgeController {
             if (expectedText) {
                 const actual = document.getText(range);
                 if (actual !== expectedText) {
-                    throw new Error(`Expected text mismatch before workspace edit in ${document.uri.fsPath}.`);
+                    throw new Error(`Expected text mismatch before workspace edit. file=${document.uri.fsPath} range=${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1} expected=${JSON.stringify(expectedText.length > 200 ? `${expectedText.slice(0, 200)}...` : expectedText)} actual=${JSON.stringify(actual.length > 200 ? `${actual.slice(0, 200)}...` : actual)}`);
                 }
             }
             workspaceEdit.replace(document.uri, range, String(item.newText ?? item.new_text ?? ''));
@@ -827,3 +827,4 @@ class BridgeController {
 }
 exports.BridgeController = BridgeController;
 //# sourceMappingURL=bridgeController.js.map
+

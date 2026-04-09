@@ -1,4 +1,4 @@
-# windows-code-search-mcp
+﻿# windows-code-search-mcp
 
 Single MCP server that combines:
 
@@ -18,8 +18,8 @@ It reuses the Windows-MCP OAuth environment format and does not modify the origi
 - `repo_manager.py` - local folder-picker GUI for managed repo paths
 - `managed-repositories.json` - local persisted repo config
 - `vscode-bridge-extension` - starter VS Code extension for context-window and IDE bridge sync
-- `..\\launch_windows_code_search_chatgpt_python.bat` - ChatGPT/OAuth launcher
-- `..\\open_windows_code_search_repo_manager.bat` - open the local repo manager window
+- `..\launch_windows_code_search_chatgpt_python.bat` - ChatGPT/OAuth launcher
+- `..\open_windows_code_search_repo_manager.bat` - open the local repo manager window
 
 ## Extending the server
 
@@ -46,8 +46,6 @@ Bridge defaults:
 
 MCP tools exposed for the bridge:
 
-- `create_vscode_session`
-- `close_vscode_session`
 - `list_vscode_sessions`
 - `get_vscode_session`
 - `get_vscode_context`
@@ -56,36 +54,26 @@ MCP tools exposed for the bridge:
 - `get_vscode_diagnostics`
 - `request_vscode_edit`
 - `request_vscode_workspace_edit`
-- `safe_vscode_edit`
 - `open_vscode_file`
-
 Operational notes:
 
 - After MCP server restarts, prefer the canonical `/Windows MCP/...` tool paths for follow-up calls. Cached linked tool paths can briefly return `Resource not found` until the tool list refreshes.
 - For read-only VS Code bridge checks, use `list_vscode_sessions`, `get_vscode_diagnostics`, and `get_vscode_file_range` in that order when applicable.
 - If an edit fails because `expected_text` no longer matches or the bridge reports target drift, re-read the exact range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored change.
-- `request_vscode_edit` now normalizes line endings before dispatch and retries once with live `expected_text` refreshed from disk when drift is detected.
-- `request_vscode_workspace_edit` now normalizes text payloads before dispatch and retries once with live ranged `expectedText` refreshed where possible when drift is detected.
-- For multi-chat editing, keep one VS Code bridge `session_id` per chat or task when possible. Do not reuse the same session context for unrelated chats.
-- Treat search hits, old line numbers, and earlier file reads as navigation hints only. Re-read the exact numbered lines with `get_vscode_file_range` immediately before each write.
-- Prefer `request_vscode_edit` for one small local change and `request_vscode_workspace_edit` for one logical change that spans multiple ranges gathered from the same fresh snapshot.
-- Include `expected_text` or `expectedText` by default so drift is detected instead of silently overwriting another chat's change.
-- After any successful edit, re-read the affected range before issuing the next write from the same chat.
 - Edit mismatch errors from both `request_vscode_edit` and `request_vscode_workspace_edit` now include the file path, requested range, and truncated `expected` and `actual` text previews to make drift recovery deterministic.
 - If you patch the VS Code bridge extension on disk, reload the VS Code window or restart the extension host so the running bridge picks up the updated `src/out` code.
 
 What this enables:
 
 - a VS Code context window can push dropped snippets and file contents into a named editor session
-- separate chats can keep separate VS Code context snapshots by using different `session_id` values
 - MCP clients can inspect lightweight VS Code context metadata without fetching full file contents
 - MCP clients can read exact file ranges with numbered lines immediately before issuing validated edits
 - MCP clients can inspect current IDE diagnostics from VS Code Problems data
-- MCP clients can ask VS Code to apply exact line-and-column edits through the editor API instead of writing files blindly on disk; callers should include fresh `expected_text` and re-read before follow-up edits
-- MCP clients can batch multiple related edits through one workspace edit request, which is the preferred path for multi-file or multi-chat change sets
+- MCP clients can ask VS Code to apply exact line-and-column edits through the editor API instead of writing files blindly on disk; callers should include `expected_text` and re-read before follow-up edits
 - when an edit target drifts, the bridge returns enough mismatch detail to show what text was expected, what text is actually present, and where the comparison occurred
 
 Search result normalization:
+
 - `semantic_code_search`, `lexical_code_search`, and `hybrid_code_search` add a normalized `filePath` and `snippet` when available
 - when the underlying engine provides location data, normalized hits expose it under `location` instead of synthesizing top-level edit-ready line ranges by default
 - lexical hits still preserve their original fields such as `file`, `line`, and `snippet` for backward compatibility
@@ -101,31 +89,8 @@ Current VS Code bridge UX:
 - use `Add Active Editor`, `Add Selection`, or `Add Open Editors` for explicit capture
 - use `Push Now` after updating context if you want to force an immediate sync
 
-### Multi-chat edit workflow
-
-1. Call `create_vscode_session` when you want to reserve a fresh chat-local session, or use `list_vscode_sessions` to choose an existing session that already belongs to the current chat.
-2. Call `get_vscode_session` or `get_vscode_context_summary` to confirm the workspace, files, and context tied to that session.
-3. Read the exact numbered lines you plan to change with `get_vscode_file_range` immediately before editing.
-4. For one contiguous patch, call `request_vscode_edit` with fresh `expected_text`.
-5. For several related patches, send one `request_vscode_workspace_edit` payload and include `expectedText` for each changed range when available.
-6. For one anchored exact-text replacement inside a narrow window, prefer `safe_vscode_edit`.
-7. If another chat changes the file and causes drift, re-read only the failed range, refresh the expected text, and retry the narrowest safe edit.
-8. Avoid mixing desktop automation and VS Code edits from different chats when they target the same visible VS Code window.
-9. Close finished or stale sessions with `close_vscode_session` so later chats do not accidentally reuse them.
-
-Recommended tool selection:
-
-| Goal | Preferred tool | Why |
-| --- | --- | --- |
-| Create or reserve one chat-local session | `create_vscode_session` | makes session ownership explicit before context or edits arrive |
-| Read exact target lines before editing | `get_vscode_file_range` | refreshes the current numbered range from the live workspace |
-| Replace one contiguous range | `request_vscode_edit` | applies the smallest validated patch with `expected_text` |
-| Apply several related ranges in one review unit | `request_vscode_workspace_edit` | batches edits together and reduces drift windows across chats |
-| Replace one anchored exact-text match | `safe_vscode_edit` | derives exact coordinates from one live match and validates the replacement |
-| Re-open the same file for review | `open_vscode_file` | keeps the session aligned with the active editor |
-| Close a finished session | `close_vscode_session` | reduces accidental reuse across later chats |
-
 Development and packaging:
+
 - open `vscode-bridge-extension` in VS Code and press `F5` to launch the extension development host
 - the extension includes `.vscode/launch.json` and `.vscode/tasks.json` for build + debug
 - a packaged build is generated at `vscode-bridge-extension/windows-code-search-bridge-0.0.1.vsix`
@@ -135,10 +100,10 @@ Development and packaging:
 `launch_windows_code_search_chatgpt_python.bat` now:
 
 - validates the integrated server, Windows-MCP, search engine, and Qdrant paths
-- starts Qdrant automatically through `E:\\Program Files\\qdrant\\start-qdrant.bat` if it is not already reachable on `http://127.0.0.1:16333`
-- uses `E:\\Program Files\\qdrant\\config\\local.yaml` so Qdrant stores vectors under `E:\\mcp-index-data\\qdrant`
+- starts Qdrant automatically through `E:\Program Files\qdrant\start-qdrant.bat` if it is not already reachable on `http://127.0.0.1:16333`
+- uses `E:\Program Files\qdrant\config\local.yaml` so Qdrant stores vectors under `E:\mcp-index-data\qdrant`
 - exports `QDRANT_URL`, `QDRANT_COLLECTION`, and `INDEX_ROOT`
-- sets `INDEX_ROOT=E:\\mcp-index-data` for search manifests and local lexical indexes
+- sets `INDEX_ROOT=E:\mcp-index-data` for search manifests and local lexical indexes
 - builds the TypeScript search core before starting the Python MCP host
 - logs startup index status for each managed repository, including incremental `changedFiles`, `unchangedFiles`, and `deletedFiles`
 
@@ -146,7 +111,7 @@ Development and packaging:
 
 The Python server shells out to:
 
-- `E:\\Program Files\\mcp\\ripgrep-treesitter-qdrant-mcp\\dist\\cli\\run-core.js`
+- `E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp\dist\cli\run-core.js`
 
 That keeps the TypeScript repository focused on the search/index core instead of acting as the MCP host for this combined setup.
 
@@ -172,13 +137,13 @@ Repo scoping accepts a repository root, repo name, or repo id when it resolves u
 
 Local config file:
 
-- `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
+- `E:\Program Files\mcp\windows-code-search-mcp\managed-repositories.json`
 
 You can edit that file directly to configure repo paths locally.
 
 If you prefer a folder picker instead of editing JSON, run:
 
-- `E:\\Program Files\\mcp\\open_windows_code_search_repo_manager.bat`
+- `E:\Program Files\mcp\open_windows_code_search_repo_manager.bat`
 
 That opens a local Windows GUI where you can:
 
@@ -195,12 +160,12 @@ Minimal format:
   "version": 1,
   "repositories": [
     {
-      "repo_root": "E:\\\\src\\\\repo-one",
+      "repo_root": "E:\\src\\repo-one",
       "watch": true,
       "auto_index_on_start": true
     },
     {
-      "repo_root": "E:\\\\src\\\\repo-two",
+      "repo_root": "E:\\src\\repo-two",
       "watch": true,
       "auto_index_on_start": false
     }
@@ -218,9 +183,9 @@ Notes:
 
 Search/index data locations on this machine:
 
-- managed repo config: `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
-- manifest and lexical index root: `E:\\mcp-index-data`
-- Qdrant vector storage root: `E:\\mcp-index-data\\qdrant`
+- managed repo config: `E:\Program Files\mcp\windows-code-search-mcp\managed-repositories.json`
+- manifest and lexical index root: `E:\mcp-index-data`
+- Qdrant vector storage root: `E:\mcp-index-data\qdrant`
 
 Recommended MCP flow:
 
@@ -245,7 +210,7 @@ Relevant implementation details:
 
 - `server_config.py` now builds auth with `PersistentStaticClientOAuthProvider` or `PersistentInMemoryOAuthProvider`
 - both wrappers persist the underlying FastMCP in-memory OAuth state to disk and reload it on startup
-- the default state file is `E:\\Program Files\\mcp\\windows-code-search-mcp\\oauth-state.json`
+- the default state file is `E:\Program Files\mcp\windows-code-search-mcp\oauth-state.json`
 - you can override the location with `OAUTH_STATE_PATH`
 
 Practical consequences:
@@ -295,24 +260,8 @@ Practical consequences:
 - desktop automation, clipboard, active-window interactions, process operations, shell commands, and VS Code editing still operate on shared machine state and can interfere across chats
 - this is concurrent access, not per-chat runtime isolation
 
-### Multi-chat edit behavior today
-
-The VS Code bridge already has one useful isolation primitive: `session_id`.
-
-Context reads, diagnostics, open-file requests, and edit requests are all scoped to one bridge session, so separate chats can keep separate editor context snapshots as long as they use different session ids.
-
-However, `session_id` is not a file lock.
-
-Two chats can still edit the same on-disk file if their sessions point at the same workspace copy. The current safety model is optimistic concurrency based on fresh reads plus `expected_text` or `expectedText`.
-
-Practical rules for multi-chat editing today:
-
-- use a distinct `session_id` per chat when possible
-- batch related changes into one `request_vscode_workspace_edit` call instead of many sequential edits
-- re-read the exact range before each follow-up edit after any failed, delayed, or cross-chat operation
-- do not assume window focus, clipboard state, or desktop automation are isolated just because VS Code session context is separated
-
 ### Per-chat isolation guidance
+
 Because the current transport is stateless HTTP, do not rely on in-memory connection or transport session ids as the isolation key.
 
 Use a stable identity derived from one of:
@@ -384,17 +333,3 @@ If refactoring incrementally, prefer this order:
 5. keep repo and search tools shared unless stronger isolation is needed later
 
 This avoids relying on transport connection state while making the most conflict-prone tools safe for concurrent multi-chat use.
-
-### Recommended edit contract for multiple chats
-
-Until interactive runtimes become session-scoped, document the edit contract as:
-
-- search first to locate the right file or symbol
-- use the current VS Code session, context, and diagnostics when available
-- read exact numbered lines immediately before the change
-- apply the smallest safe edit
-- include `expected_text` or `expectedText` by default
-- batch related edits from a single fresh snapshot
-- re-read the file after each successful write before issuing another edit
-
-That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.

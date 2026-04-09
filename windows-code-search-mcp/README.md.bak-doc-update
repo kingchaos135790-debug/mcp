@@ -1,4 +1,4 @@
-# windows-code-search-mcp
+﻿# windows-code-search-mcp
 
 Single MCP server that combines:
 
@@ -18,8 +18,8 @@ It reuses the Windows-MCP OAuth environment format and does not modify the origi
 - `repo_manager.py` - local folder-picker GUI for managed repo paths
 - `managed-repositories.json` - local persisted repo config
 - `vscode-bridge-extension` - starter VS Code extension for context-window and IDE bridge sync
-- `..\\launch_windows_code_search_chatgpt_python.bat` - ChatGPT/OAuth launcher
-- `..\\open_windows_code_search_repo_manager.bat` - open the local repo manager window
+- `..\launch_windows_code_search_chatgpt_python.bat` - ChatGPT/OAuth launcher
+- `..\open_windows_code_search_repo_manager.bat` - open the local repo manager window
 
 ## Extending the server
 
@@ -46,8 +46,6 @@ Bridge defaults:
 
 MCP tools exposed for the bridge:
 
-- `create_vscode_session`
-- `close_vscode_session`
 - `list_vscode_sessions`
 - `get_vscode_session`
 - `get_vscode_context`
@@ -56,9 +54,7 @@ MCP tools exposed for the bridge:
 - `get_vscode_diagnostics`
 - `request_vscode_edit`
 - `request_vscode_workspace_edit`
-- `safe_vscode_edit`
 - `open_vscode_file`
-
 Operational notes:
 
 - After MCP server restarts, prefer the canonical `/Windows MCP/...` tool paths for follow-up calls. Cached linked tool paths can briefly return `Resource not found` until the tool list refreshes.
@@ -103,27 +99,22 @@ Current VS Code bridge UX:
 
 ### Multi-chat edit workflow
 
-1. Call `create_vscode_session` when you want to reserve a fresh chat-local session, or use `list_vscode_sessions` to choose an existing session that already belongs to the current chat.
+1. Call `list_vscode_sessions` and choose the VS Code bridge session that belongs to the current chat.
 2. Call `get_vscode_session` or `get_vscode_context_summary` to confirm the workspace, files, and context tied to that session.
 3. Read the exact numbered lines you plan to change with `get_vscode_file_range` immediately before editing.
 4. For one contiguous patch, call `request_vscode_edit` with fresh `expected_text`.
 5. For several related patches, send one `request_vscode_workspace_edit` payload and include `expectedText` for each changed range when available.
-6. For one anchored exact-text replacement inside a narrow window, prefer `safe_vscode_edit`.
-7. If another chat changes the file and causes drift, re-read only the failed range, refresh the expected text, and retry the narrowest safe edit.
-8. Avoid mixing desktop automation and VS Code edits from different chats when they target the same visible VS Code window.
-9. Close finished or stale sessions with `close_vscode_session` so later chats do not accidentally reuse them.
+6. If another chat changes the file and causes drift, re-read only the failed range, refresh the expected text, and retry the narrowest safe edit.
+7. Avoid mixing desktop automation and VS Code edits from different chats when they target the same visible VS Code window.
 
 Recommended tool selection:
 
 | Goal | Preferred tool | Why |
 | --- | --- | --- |
-| Create or reserve one chat-local session | `create_vscode_session` | makes session ownership explicit before context or edits arrive |
 | Read exact target lines before editing | `get_vscode_file_range` | refreshes the current numbered range from the live workspace |
 | Replace one contiguous range | `request_vscode_edit` | applies the smallest validated patch with `expected_text` |
 | Apply several related ranges in one review unit | `request_vscode_workspace_edit` | batches edits together and reduces drift windows across chats |
-| Replace one anchored exact-text match | `safe_vscode_edit` | derives exact coordinates from one live match and validates the replacement |
 | Re-open the same file for review | `open_vscode_file` | keeps the session aligned with the active editor |
-| Close a finished session | `close_vscode_session` | reduces accidental reuse across later chats |
 
 Development and packaging:
 - open `vscode-bridge-extension` in VS Code and press `F5` to launch the extension development host
@@ -135,10 +126,10 @@ Development and packaging:
 `launch_windows_code_search_chatgpt_python.bat` now:
 
 - validates the integrated server, Windows-MCP, search engine, and Qdrant paths
-- starts Qdrant automatically through `E:\\Program Files\\qdrant\\start-qdrant.bat` if it is not already reachable on `http://127.0.0.1:16333`
-- uses `E:\\Program Files\\qdrant\\config\\local.yaml` so Qdrant stores vectors under `E:\\mcp-index-data\\qdrant`
+- starts Qdrant automatically through `E:\Program Files\qdrant\start-qdrant.bat` if it is not already reachable on `http://127.0.0.1:16333`
+- uses `E:\Program Files\qdrant\config\local.yaml` so Qdrant stores vectors under `E:\mcp-index-data\qdrant`
 - exports `QDRANT_URL`, `QDRANT_COLLECTION`, and `INDEX_ROOT`
-- sets `INDEX_ROOT=E:\\mcp-index-data` for search manifests and local lexical indexes
+- sets `INDEX_ROOT=E:\mcp-index-data` for search manifests and local lexical indexes
 - builds the TypeScript search core before starting the Python MCP host
 - logs startup index status for each managed repository, including incremental `changedFiles`, `unchangedFiles`, and `deletedFiles`
 
@@ -146,7 +137,7 @@ Development and packaging:
 
 The Python server shells out to:
 
-- `E:\\Program Files\\mcp\\ripgrep-treesitter-qdrant-mcp\\dist\\cli\\run-core.js`
+- `E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp\dist\cli\run-core.js`
 
 That keeps the TypeScript repository focused on the search/index core instead of acting as the MCP host for this combined setup.
 
@@ -172,13 +163,13 @@ Repo scoping accepts a repository root, repo name, or repo id when it resolves u
 
 Local config file:
 
-- `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
+- `E:\Program Files\mcp\windows-code-search-mcp\managed-repositories.json`
 
 You can edit that file directly to configure repo paths locally.
 
 If you prefer a folder picker instead of editing JSON, run:
 
-- `E:\\Program Files\\mcp\\open_windows_code_search_repo_manager.bat`
+- `E:\Program Files\mcp\open_windows_code_search_repo_manager.bat`
 
 That opens a local Windows GUI where you can:
 
@@ -195,12 +186,12 @@ Minimal format:
   "version": 1,
   "repositories": [
     {
-      "repo_root": "E:\\\\src\\\\repo-one",
+      "repo_root": "E:\\src\\repo-one",
       "watch": true,
       "auto_index_on_start": true
     },
     {
-      "repo_root": "E:\\\\src\\\\repo-two",
+      "repo_root": "E:\\src\\repo-two",
       "watch": true,
       "auto_index_on_start": false
     }
@@ -218,9 +209,9 @@ Notes:
 
 Search/index data locations on this machine:
 
-- managed repo config: `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
-- manifest and lexical index root: `E:\\mcp-index-data`
-- Qdrant vector storage root: `E:\\mcp-index-data\\qdrant`
+- managed repo config: `E:\Program Files\mcp\windows-code-search-mcp\managed-repositories.json`
+- manifest and lexical index root: `E:\mcp-index-data`
+- Qdrant vector storage root: `E:\mcp-index-data\qdrant`
 
 Recommended MCP flow:
 
@@ -245,7 +236,7 @@ Relevant implementation details:
 
 - `server_config.py` now builds auth with `PersistentStaticClientOAuthProvider` or `PersistentInMemoryOAuthProvider`
 - both wrappers persist the underlying FastMCP in-memory OAuth state to disk and reload it on startup
-- the default state file is `E:\\Program Files\\mcp\\windows-code-search-mcp\\oauth-state.json`
+- the default state file is `E:\Program Files\mcp\windows-code-search-mcp\oauth-state.json`
 - you can override the location with `OAUTH_STATE_PATH`
 
 Practical consequences:
@@ -398,3 +389,5 @@ Until interactive runtimes become session-scoped, document the edit contract as:
 - re-read the file after each successful write before issuing another edit
 
 That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.
+
+

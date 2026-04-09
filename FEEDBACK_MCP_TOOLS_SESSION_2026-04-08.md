@@ -153,3 +153,27 @@ Suggested improvement:
 If only one area is improved first, it should be edit robustness.
 
 During this session, the biggest time cost came from repeated retries around `request_vscode_edit` mismatches and namespace/path churn, not from the underlying coding or validation work itself.
+
+## Follow-up note from 2026-04-09 joystick/docs session
+
+### 7. `request_vscode_edit` still mismatches on freshly re-read markdown blocks
+
+Observed behavior:
+- A `request_vscode_edit` call against `E:\Program Files\AndroidVisionRPA\NextStep.md` failed with `Expected text mismatch before applying edit.`
+- The request used a recently re-read numbered range from `get_vscode_file_range` and a line-bounded edit target.
+- The target block contained Windows paths such as ``datas\\UIBoxes.txt`` and ``datas\\sprites.json`` inside markdown prose.
+- In practice, the edit had to fall back to direct file rewrite via `PowerShell` even though the edit intent was straightforward.
+
+Why this is still a problem:
+- The failure mode is safe, but still too brittle for routine doc maintenance.
+- Exact-text validation appears sensitive to representation differences that are not obvious from the client side.
+- It disproportionately affects path-heavy markdown and status-note editing, where narrow line edits should usually be enough.
+
+Suggested improvement:
+- Add a `request_vscode_edit` mode that validates by line anchors plus surrounding context instead of exact full-range text equality.
+- Return the current text that caused the mismatch, or a short diff, so the caller can see whether the problem is drift, escaping, or newline normalization.
+- Consider normalizing common markdown/path cases before mismatch checks, or expose a raw-text mode whose escaping semantics are explicit.
+
+Operator assessment:
+- The block itself is normal as a safety guard.
+- The repeated mismatch after fresh rereads is still worth treating as tooling friction rather than normal workflow cost.
