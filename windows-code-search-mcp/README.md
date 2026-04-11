@@ -268,6 +268,26 @@ Use this rule of thumb:
 
 In practice, one fresh successful OAuth flow may still be needed after deploying this change so the persisted state file is populated for future restarts.
 
+### OAuth discovery metadata and tunnel origin requirements
+
+The server now exposes both standard OAuth discovery endpoints:
+
+- `/.well-known/openid-configuration`
+- `/.well-known/oauth-authorization-server`
+
+These endpoints return metadata derived from `OAUTH_BASE_URL`, including the issuer, authorization endpoint, token endpoint, supported grant types, supported response types, supported PKCE method, token endpoint auth method, and configured scopes.
+
+Why this matters:
+
+- some MCP clients and connector flows expect OAuth discovery to succeed before or during tool-calling setup
+- a missing discovery document can make the server look unresponsive even when `/mcp`, `/authorize`, and `/token` are otherwise reachable
+
+Tunnel and origin notes:
+
+- prefer a tunnel origin of `127.0.0.1:8000`, not `localhost:8000`
+- this avoids IPv6 `::1` resolution mismatches where the tunnel reaches `localhost` over IPv6 but the MCP server is only listening on `127.0.0.1`
+- if Cloudflare logs show connection failures to `dial tcp [::1]:8000`, treat that as an origin-binding problem, not a tool-handler failure
+
 ### Concurrent access today
 
 The HTTP transport is configured for stateless streamable HTTP:

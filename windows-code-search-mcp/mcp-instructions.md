@@ -16,6 +16,7 @@ Use these behaviors by default:
 - Do not assume search hits carry stable edit-ready line numbers by default.
 - After MCP server restarts, prefer canonical `/Windows MCP/...` tool paths for follow-up calls because cached linked tool paths can briefly return `Resource not found`.
 - If an edit fails because `expected_text` does not match or the target drifted, re-read the exact range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored change.
+- If OAuth or tool-calling appears unresponsive, verify that `/.well-known/openid-configuration` returns `200` and that the public tunnel targets `127.0.0.1:8000` rather than `localhost:8000` to avoid IPv6 `::1` origin mismatches.
 
 Tool selection guidance:
 

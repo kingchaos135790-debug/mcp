@@ -1,7 +1,7 @@
 {
   "access_to_refresh_map": {
-    "test_access_token_c858ffda555bef99cf3f50481f3b288e6a69784112996ab36de56a45b750048b": "test_refresh_token_d6b90400f46b172bc46da44e70658d09e19d3c639c0686d0df1ff6c13a5b36a9",
-    "test_access_token_ced2a626054443edd439b0949b92ceb771ea8faee3d8ad199cb599150e526e7b": "test_refresh_token_b0b572c88c432c857f6de6d0cffe7d7025db2adde89c4ba08ce2d55994bd8a0f",
+    "test_access_token_254d970bcd864a1f640b3dad1a0d18d6b66f6316e4d7cda63a1c5913c1b34091": "test_refresh_token_27d2f59ec5e698304d18947e7275c34ad7b79226e7c3318c0a7ec2f289b9925d",
+    "test_access_token_317043871c722adb9cf3e3f68ad8cf2e129c9ff66f76c9e71cab4b297bd59543": "test_refresh_token_fbdb4decede6df0d231dc60dacc088064d99b33f7ec09d433d92c0862a3db208",
     "test_access_token_d032ca79304f3a71ede3f7968cb47f57b9d1367c6124aa5961936321dccdb9a0": "test_refresh_token_bbbc3177649898c8f7a78dfa0b2e24aadcc8854d090ac46be6416671ef67a7e5",
     "test_access_token_d069e4a89b67fc56e29fe8739e92d1c267a80a5bfdc7136e29506ba37e48757a": "test_refresh_token_342d5a047830d0e997b18e14b152bd2a94a27a9ac51da0c429e0f8de6bddf145",
     "test_access_token_d9143548de69669c58d3affd3fbafae9a6b0a87848bcd96e03170e3e776b8463": "test_refresh_token_e26c5d7acef3318cefc7cc9199e64ef3b247f1836361f4cdfc7a8cbddab5cf3c",
@@ -11,25 +11,27 @@
     "test_access_token_f52c4cea1bfd16f4b4f2cfa21e776e0960c4b82eb60299bab0f72b0e475532ec": "test_refresh_token_13b6ea6d415c6ab3d6c3a57ddf64f22ef66be0ee4fd5cca9007c236737b386bb",
     "test_access_token_f9bee5ed3bd686f3eb313655b0a1347d87bf6b03ebe8ca3ca6ecbf9c411aaac8": "test_refresh_token_09679a9978f7602222e26d9d7f412ab8c6a722ff6801b21bbf0a934f50e07a06"
   },
-  "access_token_session_map": {},
+  "access_token_session_map": {
+    "test_access_token_254d970bcd864a1f640b3dad1a0d18d6b66f6316e4d7cda63a1c5913c1b34091": "mcp-mnkc1s41"
+  },
   "access_tokens": {
-    "test_access_token_c858ffda555bef99cf3f50481f3b288e6a69784112996ab36de56a45b750048b": {
+    "test_access_token_254d970bcd864a1f640b3dad1a0d18d6b66f6316e4d7cda63a1c5913c1b34091": {
       "client_id": "windows",
-      "expires_at": 1775721802,
+      "expires_at": 1775889596,
       "resource": null,
       "scopes": [
         "mcp:access"
       ],
-      "token": "test_access_token_c858ffda555bef99cf3f50481f3b288e6a69784112996ab36de56a45b750048b"
+      "token": "test_access_token_254d970bcd864a1f640b3dad1a0d18d6b66f6316e4d7cda63a1c5913c1b34091"
     },
-    "test_access_token_ced2a626054443edd439b0949b92ceb771ea8faee3d8ad199cb599150e526e7b": {
+    "test_access_token_317043871c722adb9cf3e3f68ad8cf2e129c9ff66f76c9e71cab4b297bd59543": {
       "client_id": "windows",
-      "expires_at": 1775758107,
+      "expires_at": 1775889315,
       "resource": null,
       "scopes": [
         "mcp:access"
       ],
-      "token": "test_access_token_ced2a626054443edd439b0949b92ceb771ea8faee3d8ad199cb599150e526e7b"
+      "token": "test_access_token_317043871c722adb9cf3e3f68ad8cf2e129c9ff66f76c9e71cab4b297bd59543"
     },
     "test_access_token_d032ca79304f3a71ede3f7968cb47f57b9d1367c6124aa5961936321dccdb9a0": {
       "client_id": "windows",
@@ -148,20 +150,22 @@
       "tos_uri": null
     }
   },
-  "last_boot_id": "2e0ca1a1c766",
+  "last_boot_id": "e674990b6761",
   "refresh_to_access_map": {
     "test_refresh_token_09679a9978f7602222e26d9d7f412ab8c6a722ff6801b21bbf0a934f50e07a06": "test_access_token_f9bee5ed3bd686f3eb313655b0a1347d87bf6b03ebe8ca3ca6ecbf9c411aaac8",
     "test_refresh_token_13b6ea6d415c6ab3d6c3a57ddf64f22ef66be0ee4fd5cca9007c236737b386bb": "test_access_token_f52c4cea1bfd16f4b4f2cfa21e776e0960c4b82eb60299bab0f72b0e475532ec",
     "test_refresh_token_23567b31320a15d6ef7e7e1373a8dba29e200465f199ae3638446ab05f1d36b4": "test_access_token_d99f7cc5deb4dbe74a5207def96027510267b889755b5a455ff41fc502c2ab60",
+    "test_refresh_token_27d2f59ec5e698304d18947e7275c34ad7b79226e7c3318c0a7ec2f289b9925d": "test_access_token_254d970bcd864a1f640b3dad1a0d18d6b66f6316e4d7cda63a1c5913c1b34091",
     "test_refresh_token_342d5a047830d0e997b18e14b152bd2a94a27a9ac51da0c429e0f8de6bddf145": "test_access_token_d069e4a89b67fc56e29fe8739e92d1c267a80a5bfdc7136e29506ba37e48757a",
     "test_refresh_token_50e9a746d7a09217d7e879fc9ac7aa1960264dadd2165d941addafbffe38b039": "test_access_token_ee2b847b5707d6bdd96d19e014ec797f4c4927fd98f85e79dfff113d9d44fbc2",
     "test_refresh_token_68c1d260ff967e37d790a605f11090f7583a5bc6b366aaae42c47c4e90ba0fc7": "test_access_token_e8a91352592482f7bc1a80bac16f2bf98c03624125e6da0331356862bd0ee351",
-    "test_refresh_token_b0b572c88c432c857f6de6d0cffe7d7025db2adde89c4ba08ce2d55994bd8a0f": "test_access_token_ced2a626054443edd439b0949b92ceb771ea8faee3d8ad199cb599150e526e7b",
     "test_refresh_token_bbbc3177649898c8f7a78dfa0b2e24aadcc8854d090ac46be6416671ef67a7e5": "test_access_token_d032ca79304f3a71ede3f7968cb47f57b9d1367c6124aa5961936321dccdb9a0",
-    "test_refresh_token_d6b90400f46b172bc46da44e70658d09e19d3c639c0686d0df1ff6c13a5b36a9": "test_access_token_c858ffda555bef99cf3f50481f3b288e6a69784112996ab36de56a45b750048b",
-    "test_refresh_token_e26c5d7acef3318cefc7cc9199e64ef3b247f1836361f4cdfc7a8cbddab5cf3c": "test_access_token_d9143548de69669c58d3affd3fbafae9a6b0a87848bcd96e03170e3e776b8463"
+    "test_refresh_token_e26c5d7acef3318cefc7cc9199e64ef3b247f1836361f4cdfc7a8cbddab5cf3c": "test_access_token_d9143548de69669c58d3affd3fbafae9a6b0a87848bcd96e03170e3e776b8463",
+    "test_refresh_token_fbdb4decede6df0d231dc60dacc088064d99b33f7ec09d433d92c0862a3db208": "test_access_token_317043871c722adb9cf3e3f68ad8cf2e129c9ff66f76c9e71cab4b297bd59543"
   },
-  "refresh_token_session_map": {},
+  "refresh_token_session_map": {
+    "test_refresh_token_27d2f59ec5e698304d18947e7275c34ad7b79226e7c3318c0a7ec2f289b9925d": "mcp-mnkc1s41"
+  },
   "refresh_tokens": {
     "test_refresh_token_09679a9978f7602222e26d9d7f412ab8c6a722ff6801b21bbf0a934f50e07a06": {
       "client_id": "windows",
@@ -187,6 +191,14 @@
       ],
       "token": "test_refresh_token_23567b31320a15d6ef7e7e1373a8dba29e200465f199ae3638446ab05f1d36b4"
     },
+    "test_refresh_token_27d2f59ec5e698304d18947e7275c34ad7b79226e7c3318c0a7ec2f289b9925d": {
+      "client_id": "windows",
+      "expires_at": null,
+      "scopes": [
+        "mcp:access"
+      ],
+      "token": "test_refresh_token_27d2f59ec5e698304d18947e7275c34ad7b79226e7c3318c0a7ec2f289b9925d"
+    },
     "test_refresh_token_342d5a047830d0e997b18e14b152bd2a94a27a9ac51da0c429e0f8de6bddf145": {
       "client_id": "windows",
       "expires_at": null,
@@ -211,14 +223,6 @@
       ],
       "token": "test_refresh_token_68c1d260ff967e37d790a605f11090f7583a5bc6b366aaae42c47c4e90ba0fc7"
     },
-    "test_refresh_token_b0b572c88c432c857f6de6d0cffe7d7025db2adde89c4ba08ce2d55994bd8a0f": {
-      "client_id": "windows",
-      "expires_at": null,
-      "scopes": [
-        "mcp:access"
-      ],
-      "token": "test_refresh_token_b0b572c88c432c857f6de6d0cffe7d7025db2adde89c4ba08ce2d55994bd8a0f"
-    },
     "test_refresh_token_bbbc3177649898c8f7a78dfa0b2e24aadcc8854d090ac46be6416671ef67a7e5": {
       "client_id": "windows",
       "expires_at": null,
@@ -227,14 +231,6 @@
       ],
       "token": "test_refresh_token_bbbc3177649898c8f7a78dfa0b2e24aadcc8854d090ac46be6416671ef67a7e5"
     },
-    "test_refresh_token_d6b90400f46b172bc46da44e70658d09e19d3c639c0686d0df1ff6c13a5b36a9": {
-      "client_id": "windows",
-      "expires_at": null,
-      "scopes": [
-        "mcp:access"
-      ],
-      "token": "test_refresh_token_d6b90400f46b172bc46da44e70658d09e19d3c639c0686d0df1ff6c13a5b36a9"
-    },
     "test_refresh_token_e26c5d7acef3318cefc7cc9199e64ef3b247f1836361f4cdfc7a8cbddab5cf3c": {
       "client_id": "windows",
       "expires_at": null,
@@ -242,8 +238,16 @@
         "mcp:access"
       ],
       "token": "test_refresh_token_e26c5d7acef3318cefc7cc9199e64ef3b247f1836361f4cdfc7a8cbddab5cf3c"
+    },
+    "test_refresh_token_fbdb4decede6df0d231dc60dacc088064d99b33f7ec09d433d92c0862a3db208": {
+      "client_id": "windows",
+      "expires_at": null,
+      "scopes": [
+        "mcp:access"
+      ],
+      "token": "test_refresh_token_fbdb4decede6df0d231dc60dacc088064d99b33f7ec09d433d92c0862a3db208"
     }
   },
-  "run_count": 3,
+  "run_count": 8,
   "version": 2
 }
