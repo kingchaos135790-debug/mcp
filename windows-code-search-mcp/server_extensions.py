@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import asdict
 from functools import wraps
@@ -249,6 +249,38 @@ def extract_live_range_text(workspace_root: str, file_path: str, start_line: int
     if end_offset < start_offset:
         raise ValueError("end position must be >= start position")
     return resolved, content[start_offset:end_offset]
+
+
+def find_unique_substring(content: str, needle: str, *, label: str) -> int:
+    if not needle:
+        raise ValueError(f"{label} is required")
+    normalized_content = normalize_vscode_text(content)
+    normalized_needle = normalize_vscode_text(needle)
+    first_index = normalized_content.find(normalized_needle)
+    if first_index < 0:
+        raise ValueError(f"{label} was not found in the requested file range")
+    second_index = normalized_content.find(normalized_needle, first_index + 1)
+    if second_index >= 0:
+        raise ValueError(f"{label} matched more than once; narrow the line window or provide a more specific anchor")
+    return first_index
+
+
+def resolve_anchor_edit_offsets(content: str, start_anchor: str, end_anchor: str, expected_body: str = "") -> tuple[int, int, str]:
+    normalized_content = normalize_vscode_text(content)
+    normalized_start_anchor = normalize_vscode_text(start_anchor)
+    normalized_end_anchor = normalize_vscode_text(end_anchor)
+    start_anchor_offset = find_unique_substring(normalized_content, normalized_start_anchor, label="start_anchor")
+    body_start_offset = start_anchor_offset + len(normalized_start_anchor)
+    end_anchor_offset = normalized_content.find(normalized_end_anchor, body_start_offset)
+    if end_anchor_offset < 0:
+        raise ValueError("end_anchor was not found after start_anchor in the requested file range")
+    if normalized_content.find(normalized_end_anchor, end_anchor_offset + 1) >= 0:
+        raise ValueError("end_anchor matched more than once after start_anchor; narrow the line window or provide a more specific anchor")
+    matched_body = normalized_content[body_start_offset:end_anchor_offset]
+    normalized_expected_body = normalize_vscode_text(expected_body) if expected_body else ""
+    if normalized_expected_body and matched_body != normalized_expected_body:
+        raise ValueError("expected_body did not match the text between start_anchor and end_anchor")
+    return body_start_offset, end_anchor_offset, matched_body
 
 
 def run_engine_tool(context: ServerContext, tool_name: str, payload: dict[str, object]) -> object:
@@ -959,6 +991,79 @@ class VSCodeBridgeExtension:
             return format_tool_result(require_vscode_command_success("safe_vscode_edit", result))
 
         @mcp.tool(
+            name="anchored_vscode_edit",
+            description="Find a unique region between start and end anchors in a VS Code workspace file, validate optional expected body text, and apply a validated edit to just that anchored body.",
+            annotations=ToolAnnotations(
+                title="anchored_vscode_edit",
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        @session_bound_tool
+        async def anchored_vscode_edit(
+            session_id: str = "",
+            file_path: str = "",
+            start_anchor: str = "",
+            end_anchor: str = "",
+            replacement_text: str = "",
+            expected_body: str = "",
+            start_line: int = 1,
+            end_line: int = 0,
+            timeout_seconds: int = 30,
+        ) -> str:
+            if not start_anchor:
+                raise ValueError("start_anchor is required")
+            if not end_anchor:
+                raise ValueError("end_anchor is required")
+            bridge = get_vscode_bridge(context)
+            assert isinstance(bridge, VSCodeBridgeServer)
+            workspace_root = resolve_vscode_workspace_root(bridge, session_id)
+            resolved = resolve_workspace_file_path(workspace_root, file_path)
+            payload = read_numbered_file_range(resolved, start_line=start_line, end_line=end_line)
+            haystack = normalize_vscode_text(str(payload.get("content", "")))
+            body_start_offset, body_end_offset, matched_body = resolve_anchor_edit_offsets(
+                haystack,
+                start_anchor=start_anchor,
+                end_anchor=end_anchor,
+                expected_body=expected_body,
+            )
+            window_start_line = int(payload.get("startLine") or 1)
+            match_start_line, match_start_column = offset_to_line_and_column(haystack, body_start_offset, base_line=window_start_line)
+            match_end_line, match_end_column = offset_to_line_and_column(haystack, body_end_offset, base_line=window_start_line)
+            _, live_expected_text = extract_live_range_text(workspace_root, str(resolved), match_start_line, match_start_column, match_end_line, match_end_column)
+            if expected_body and normalize_vscode_text(live_expected_text) != normalize_vscode_text(expected_body):
+                raise ValueError("expected_body no longer matches the live text between start_anchor and end_anchor")
+            result = await bridge.request_edit(
+                session_id=session_id,
+                file_path=str(resolved),
+                start_line=match_start_line,
+                start_column=match_start_column,
+                end_line=match_end_line,
+                end_column=match_end_column,
+                new_text=normalize_vscode_text(replacement_text),
+                expected_text=live_expected_text,
+                timeout_seconds=timeout_seconds,
+            )
+            if isinstance(result, dict):
+                result.setdefault("anchorBasedEdit", True)
+                result.setdefault("matchedBody", live_expected_text)
+                result.setdefault("filePath", str(resolved))
+                result.setdefault("anchors", {"start": normalize_vscode_text(start_anchor), "end": normalize_vscode_text(end_anchor)})
+                result.setdefault(
+                    "range",
+                    {
+                        "startLine": match_start_line,
+                        "startColumn": match_start_column,
+                        "endLine": match_end_line,
+                        "endColumn": match_end_column,
+                    },
+                )
+            return format_tool_result(require_vscode_command_success("anchored_vscode_edit", result))
+
+
+        @mcp.tool(
             name="open_vscode_file",
             description="Ask the VS Code extension to reveal a file at a specific line and column.",
             annotations=ToolAnnotations(
@@ -1001,3 +1106,5 @@ class VSCodeBridgeExtension:
         if isinstance(bridge, VSCodeBridgeServer):
             bridge.stop()
         context.vscode_bridge = None
+
+

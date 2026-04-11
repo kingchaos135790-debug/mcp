@@ -57,6 +57,7 @@ MCP tools exposed for the bridge:
 - `request_vscode_edit`
 - `request_vscode_workspace_edit`
 - `safe_vscode_edit`
+- `anchored_vscode_edit`
 - `open_vscode_file`
 
 Operational notes:
@@ -68,7 +69,7 @@ Operational notes:
 - `request_vscode_workspace_edit` now normalizes text payloads before dispatch and retries once with live ranged `expectedText` refreshed where possible when drift is detected.
 - For multi-chat editing, keep one VS Code bridge `session_id` per chat or task when possible. Do not reuse the same session context for unrelated chats.
 - Treat search hits, old line numbers, and earlier file reads as navigation hints only. Re-read the exact numbered lines with `get_vscode_file_range` immediately before each write.
-- Prefer `request_vscode_edit` for one small local change and `request_vscode_workspace_edit` for one logical change that spans multiple ranges gathered from the same fresh snapshot.
+- Prefer `request_vscode_edit` for one small local change, `safe_vscode_edit` for one exact anchored replacement, `anchored_vscode_edit` for replacing the body between stable start/end anchors, and `request_vscode_workspace_edit` for one logical change that spans multiple ranges gathered from the same fresh snapshot.
 - Include `expected_text` or `expectedText` by default so drift is detected instead of silently overwriting another chat's change.
 - After any successful edit, re-read the affected range before issuing the next write from the same chat.
 - Edit mismatch errors from both `request_vscode_edit` and `request_vscode_workspace_edit` now include the file path, requested range, and truncated `expected` and `actual` text previews to make drift recovery deterministic.
@@ -420,3 +421,4 @@ Until interactive runtimes become session-scoped, document the edit contract as:
 - re-read the file after each successful write before issuing another edit
 
 That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.
+

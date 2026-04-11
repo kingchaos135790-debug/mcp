@@ -40,6 +40,7 @@ class _PersistentOAuthStateMixin:
         )
         self._access_token_session_map: dict[str, str] = {}
         self._refresh_token_session_map: dict[str, str] = {}
+        self._auth_code_session_map: dict[str, str] = {}
         self._load_state()
         current_boot_id = get_current_boot_id()
         if current_boot_id and current_boot_id != self._last_boot_id:
@@ -101,6 +102,7 @@ class _PersistentOAuthStateMixin:
             "refresh_to_access_map": dict(self._refresh_to_access_map),
             "access_token_session_map": dict(self._access_token_session_map),
             "refresh_token_session_map": dict(self._refresh_token_session_map),
+            "auth_code_session_map": dict(self._auth_code_session_map),
         }
         temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         temp_path.replace(self._storage_path)
@@ -110,6 +112,7 @@ class _PersistentOAuthStateMixin:
         self._last_boot_id = ""
         self._access_token_session_map = {}
         self._refresh_token_session_map = {}
+        self._auth_code_session_map = {}
         if not self._storage_path.exists():
             return
         try:
@@ -136,6 +139,11 @@ class _PersistentOAuthStateMixin:
                 for k, v in payload.get("refresh_token_session_map", {}).items()
                 if normalize_chat_session_id(str(v))
             }
+            self._auth_code_session_map = {
+                str(k): normalize_chat_session_id(str(v))
+                for k, v in payload.get("auth_code_session_map", {}).items()
+                if normalize_chat_session_id(str(v))
+            }
             self._run_count = int(payload.get("run_count", 0) or 0)
             self._last_boot_id = str(payload.get("last_boot_id", "") or "").strip()
         except Exception as exc:
@@ -151,6 +159,11 @@ class _PersistentOAuthStateMixin:
             token: session_id
             for token, session_id in self._refresh_token_session_map.items()
             if token in self.refresh_tokens and session_id
+        }
+        self._auth_code_session_map = {
+            code: session_id
+            for code, session_id in self._auth_code_session_map.items()
+            if code in self.auth_codes and session_id
         }
 
     def _record_token_session_ownership(
@@ -190,6 +203,17 @@ class _PersistentOAuthStateMixin:
             self._persist_state()
         return normalized_session_id
 
+    def _record_auth_code_session_ownership(self, authorization_code: str | None, session_id: str | None) -> str:
+        normalized_session_id = normalize_chat_session_id(session_id)
+        authorization_code_value = str(authorization_code or "").strip()
+        if not normalized_session_id or not authorization_code_value:
+            return ""
+        if self._auth_code_session_map.get(authorization_code_value) == normalized_session_id:
+            return normalized_session_id
+        self._auth_code_session_map[authorization_code_value] = normalized_session_id
+        self._persist_state()
+        return normalized_session_id
+
     def bind_access_token_to_chat_session(self, access_token: str, session_id: str) -> None:
         self._record_token_session_ownership(access_token=access_token, session_id=session_id)
 
@@ -210,7 +234,13 @@ class _PersistentOAuthStateMixin:
         self._persist_state()
 
     async def authorize(self, client: OAuthClientInformationFull, params):
+        existing_codes = set(self.auth_codes)
         redirect_uri = await super().authorize(client, params)
+        session_id = get_current_chat_session_id()
+        if session_id:
+            for authorization_code in self.auth_codes:
+                if authorization_code not in existing_codes:
+                    self._record_auth_code_session_ownership(authorization_code, session_id)
         self._persist_state()
         return redirect_uri
 
@@ -218,15 +248,21 @@ class _PersistentOAuthStateMixin:
         had_code = authorization_code in self.auth_codes
         result = await super().load_authorization_code(client, authorization_code)
         if had_code and authorization_code not in self.auth_codes:
+            self._auth_code_session_map.pop(str(authorization_code), None)
             self._persist_state()
         return result
 
     async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code):
         token = await super().exchange_authorization_code(client, authorization_code)
+        authorization_code_value = str(authorization_code or "").strip()
+        session_id = (
+            get_current_chat_session_id()
+            or normalize_chat_session_id(self._auth_code_session_map.pop(authorization_code_value, ""))
+        )
         self._record_token_session_ownership(
             access_token=getattr(token, "access_token", ""),
             refresh_token=getattr(token, "refresh_token", ""),
-            session_id=get_current_chat_session_id(),
+            session_id=session_id,
         )
         self._persist_state()
         return token
@@ -254,9 +290,21 @@ class _PersistentOAuthStateMixin:
 
     async def load_access_token(self, token: str):  # type: ignore[override]
         had_token = token in self.access_tokens
+        request_session_id = get_current_chat_session_id()
         result = await super().load_access_token(token)
         set_current_access_token(token)
         session_id = self.resolve_chat_session_for_access_token(token)
+        if not session_id and request_session_id:
+            linked_refresh = self._access_to_refresh_map.get(str(token), "")
+            session_id = self._record_token_session_ownership(
+                access_token=str(token),
+                refresh_token=linked_refresh,
+                session_id=request_session_id,
+            )
+            if session_id:
+                LOGGER.info(
+                    "Recovered missing OAuth session binding for access token during request continuation"
+                )
         if session_id:
             set_current_chat_session_id(session_id)
         if had_token and token not in self.access_tokens:
@@ -323,6 +371,7 @@ VSCODE_TOOL_NAMES = [
     "request_vscode_edit",
     "request_vscode_workspace_edit",
     "safe_vscode_edit",
+    "anchored_vscode_edit",
     "open_vscode_file",
 ]
 

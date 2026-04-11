@@ -1,4 +1,4 @@
-Windows Code Search MCP combines Windows desktop automation, repository indexing, code search, and a VS Code bridge in one MCP server.
+﻿Windows Code Search MCP combines Windows desktop automation, repository indexing, code search, and a VS Code bridge in one MCP server.
 
 Use these behaviors by default:
 
@@ -31,6 +31,7 @@ Tool selection guidance:
 - `request_vscode_edit`: apply one validated line-and-column text edit.
 - `request_vscode_workspace_edit`: apply multiple coordinated validated edits.
 - `safe_vscode_edit`: find one anchored exact text match and convert it into a validated edit.
+- `anchored_vscode_edit`: replace the body between a unique start anchor and end anchor with optional body validation.
 - `open_vscode_file`: reveal a file at a specific location in VS Code.
 
 Editing workflow:
@@ -40,7 +41,7 @@ Editing workflow:
 3. Inspect `get_vscode_context_summary` and `get_vscode_diagnostics` when relevant.
 4. Read the exact region with `get_vscode_file_range`.
 5. Verify the intended change against the freshly returned lines.
-6. Apply the smallest safe edit with `expected_text`, or use `safe_vscode_edit` for one anchored exact-text replacement.
+6. Apply the smallest safe edit with `expected_text`, use `safe_vscode_edit` for one anchored exact-text replacement, or use `anchored_vscode_edit` when a block is best targeted by stable start/end anchors.
 7. Re-read before any follow-up edit.
 8. Close stale or finished sessions with `close_vscode_session` when they should not be reused.
 
@@ -49,3 +50,4 @@ Question-answering workflow:
 1. Find the likely file or symbol with search when needed.
 2. Retrieve context with `get_vscode_context` only when the answer depends on full context content.
 3. Use `get_vscode_file_range` when numbered line references are needed.
+

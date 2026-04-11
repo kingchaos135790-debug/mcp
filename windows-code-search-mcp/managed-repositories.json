@@ -1,4 +1,37 @@
 {
   "version": 1,
-  "repositories": []
+  "repositories": [
+    {
+      "repo_root": "E:\\Program Files\\bt-hid-lua",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-11T14:45:19.006014Z",
+      "last_index_reason": "manual",
+      "last_result": {
+        "repoId": "bt-hid-lua-81096602efa7",
+        "repoName": "bt-hid-lua",
+        "repoRoot": "E:\\Program Files\\bt-hid-lua",
+        "indexedFiles": 0,
+        "changedFiles": 0,
+        "unchangedFiles": 0,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\bt-hid-lua-81096602efa7\\local-lexical-index.json",
+          "documents": 0
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    }
+  ]
 }
