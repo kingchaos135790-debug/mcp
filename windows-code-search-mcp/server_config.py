@@ -16,15 +16,37 @@ import bootstrap  # noqa: F401
 
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
 from windows_mcp.auth import StaticClientOAuthProvider
+from session_context import (
+    get_current_boot_id,
+    get_current_chat_session_id,
+    normalize_chat_session_id,
+    register_token_session_binder,
+    set_current_access_token,
+    set_current_chat_session_id,
+)
 
 LOGGER = logging.getLogger(__name__)
 
 
 class _PersistentOAuthStateMixin:
-    def _init_persistence(self, storage_path: str | Path) -> None:
+    def _init_persistence(self, storage_path: str | Path, max_tokens: int = 0) -> None:
         self._storage_path = Path(storage_path).expanduser().resolve()
         self._state_lock = RLock()
+        self._run_count = 0
+        self._last_boot_id = ""
+        self._max_persisted_tokens = max(
+            0,
+            int(max_tokens or os.getenv("OAUTH_STATE_MAX_TOKENS", "0") or 0),
+        )
+        self._access_token_session_map: dict[str, str] = {}
+        self._refresh_token_session_map: dict[str, str] = {}
         self._load_state()
+        current_boot_id = get_current_boot_id()
+        if current_boot_id and current_boot_id != self._last_boot_id:
+            self._run_count += 1
+            self._last_boot_id = current_boot_id
+        register_token_session_binder(self.bind_access_token_to_chat_session)
+        self._persist_state()
 
     def _serialize_models(self, values: dict[str, object]) -> dict[str, object]:
         return {
@@ -38,22 +60,56 @@ class _PersistentOAuthStateMixin:
             for key, value in values.items()
         }
 
+    def _drop_token_pair(self, access_token: str) -> bool:
+        access_token_value = str(access_token or "").strip()
+        if not access_token_value:
+            return False
+        removed = self.access_tokens.pop(access_token_value, None) is not None
+        self._access_token_session_map.pop(access_token_value, None)
+        linked_refresh = self._access_to_refresh_map.pop(access_token_value, "")
+        if linked_refresh:
+            self.refresh_tokens.pop(linked_refresh, None)
+            self._refresh_token_session_map.pop(linked_refresh, None)
+            self._refresh_to_access_map.pop(linked_refresh, None)
+            removed = True
+        return removed
+
+    def _enforce_max_token_count(self) -> None:
+        if self._max_persisted_tokens <= 0:
+            return
+        while len(self.access_tokens) > self._max_persisted_tokens:
+            oldest_access_token = next(iter(self.access_tokens), "")
+            if not oldest_access_token:
+                break
+            if not self._drop_token_pair(oldest_access_token):
+                break
+        self._prune_session_maps()
+
     def _persist_state(self) -> None:
+        self._enforce_max_token_count()
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self._storage_path.with_suffix(self._storage_path.suffix + ".tmp")
         payload = {
-            "version": 1,
+            "version": 2,
+            "run_count": int(self._run_count),
+            "last_boot_id": self._last_boot_id,
             "clients": self._serialize_models(self.clients),
             "auth_codes": self._serialize_models(self.auth_codes),
             "access_tokens": self._serialize_models(self.access_tokens),
             "refresh_tokens": self._serialize_models(self.refresh_tokens),
             "access_to_refresh_map": dict(self._access_to_refresh_map),
             "refresh_to_access_map": dict(self._refresh_to_access_map),
+            "access_token_session_map": dict(self._access_token_session_map),
+            "refresh_token_session_map": dict(self._refresh_token_session_map),
         }
         temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         temp_path.replace(self._storage_path)
 
     def _load_state(self) -> None:
+        self._run_count = 0
+        self._last_boot_id = ""
+        self._access_token_session_map = {}
+        self._refresh_token_session_map = {}
         if not self._storage_path.exists():
             return
         try:
@@ -62,10 +118,92 @@ class _PersistentOAuthStateMixin:
             self.auth_codes = self._deserialize_models(payload.get("auth_codes", {}), AuthorizationCode)
             self.access_tokens = self._deserialize_models(payload.get("access_tokens", {}), AccessToken)
             self.refresh_tokens = self._deserialize_models(payload.get("refresh_tokens", {}), RefreshToken)
-            self._access_to_refresh_map = {str(k): str(v) for k, v in payload.get("access_to_refresh_map", {}).items()}
-            self._refresh_to_access_map = {str(k): str(v) for k, v in payload.get("refresh_to_access_map", {}).items()}
+            self._access_to_refresh_map = {
+                str(k): str(v)
+                for k, v in payload.get("access_to_refresh_map", {}).items()
+            }
+            self._refresh_to_access_map = {
+                str(k): str(v)
+                for k, v in payload.get("refresh_to_access_map", {}).items()
+            }
+            self._access_token_session_map = {
+                str(k): normalize_chat_session_id(str(v))
+                for k, v in payload.get("access_token_session_map", {}).items()
+                if normalize_chat_session_id(str(v))
+            }
+            self._refresh_token_session_map = {
+                str(k): normalize_chat_session_id(str(v))
+                for k, v in payload.get("refresh_token_session_map", {}).items()
+                if normalize_chat_session_id(str(v))
+            }
+            self._run_count = int(payload.get("run_count", 0) or 0)
+            self._last_boot_id = str(payload.get("last_boot_id", "") or "").strip()
         except Exception as exc:
             LOGGER.warning("Failed to load OAuth state from %s: %s", self._storage_path, exc)
+
+    def _prune_session_maps(self) -> None:
+        self._access_token_session_map = {
+            token: session_id
+            for token, session_id in self._access_token_session_map.items()
+            if token in self.access_tokens and session_id
+        }
+        self._refresh_token_session_map = {
+            token: session_id
+            for token, session_id in self._refresh_token_session_map.items()
+            if token in self.refresh_tokens and session_id
+        }
+
+    def _record_token_session_ownership(
+        self,
+        *,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        normalized_session_id = normalize_chat_session_id(session_id)
+        if not normalized_session_id:
+            return ""
+
+        access_token_value = str(access_token or "").strip()
+        refresh_token_value = str(refresh_token or "").strip()
+        changed = False
+
+        if access_token_value:
+            if self._access_token_session_map.get(access_token_value) != normalized_session_id:
+                self._access_token_session_map[access_token_value] = normalized_session_id
+                changed = True
+            linked_refresh = self._access_to_refresh_map.get(access_token_value)
+            if linked_refresh and self._refresh_token_session_map.get(linked_refresh) != normalized_session_id:
+                self._refresh_token_session_map[linked_refresh] = normalized_session_id
+                changed = True
+
+        if refresh_token_value:
+            if self._refresh_token_session_map.get(refresh_token_value) != normalized_session_id:
+                self._refresh_token_session_map[refresh_token_value] = normalized_session_id
+                changed = True
+            linked_access = self._refresh_to_access_map.get(refresh_token_value)
+            if linked_access and self._access_token_session_map.get(linked_access) != normalized_session_id:
+                self._access_token_session_map[linked_access] = normalized_session_id
+                changed = True
+
+        if changed:
+            self._persist_state()
+        return normalized_session_id
+
+    def bind_access_token_to_chat_session(self, access_token: str, session_id: str) -> None:
+        self._record_token_session_ownership(access_token=access_token, session_id=session_id)
+
+    def resolve_chat_session_for_access_token(self, access_token: str | None) -> str:
+        access_token_value = str(access_token or "").strip()
+        if not access_token_value:
+            return ""
+        direct = normalize_chat_session_id(self._access_token_session_map.get(access_token_value, ""))
+        if direct:
+            return direct
+        refresh_token = self._access_to_refresh_map.get(access_token_value, "")
+        if not refresh_token:
+            return ""
+        return normalize_chat_session_id(self._refresh_token_session_map.get(refresh_token, ""))
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         await super().register_client(client_info)
@@ -85,6 +223,11 @@ class _PersistentOAuthStateMixin:
 
     async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code):
         token = await super().exchange_authorization_code(client, authorization_code)
+        self._record_token_session_ownership(
+            access_token=getattr(token, "access_token", ""),
+            refresh_token=getattr(token, "refresh_token", ""),
+            session_id=get_current_chat_session_id(),
+        )
         self._persist_state()
         return token
 
@@ -97,18 +240,42 @@ class _PersistentOAuthStateMixin:
 
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token, scopes: list[str]):
         token = await super().exchange_refresh_token(client, refresh_token, scopes)
+        session_id = (
+            get_current_chat_session_id()
+            or normalize_chat_session_id(self._refresh_token_session_map.get(str(refresh_token), ""))
+        )
+        self._record_token_session_ownership(
+            access_token=getattr(token, "access_token", ""),
+            refresh_token=getattr(token, "refresh_token", "") or str(refresh_token),
+            session_id=session_id,
+        )
         self._persist_state()
         return token
 
     async def load_access_token(self, token: str):  # type: ignore[override]
         had_token = token in self.access_tokens
         result = await super().load_access_token(token)
+        set_current_access_token(token)
+        session_id = self.resolve_chat_session_for_access_token(token)
+        if session_id:
+            set_current_chat_session_id(session_id)
         if had_token and token not in self.access_tokens:
+            self._prune_session_maps()
             self._persist_state()
         return result
 
     async def revoke_token(self, token) -> None:
+        token_value = str(token)
         await super().revoke_token(token)
+        self._access_token_session_map.pop(token_value, None)
+        self._refresh_token_session_map.pop(token_value, None)
+        linked_refresh = self._access_to_refresh_map.get(token_value)
+        if linked_refresh:
+            self._refresh_token_session_map.pop(linked_refresh, None)
+        linked_access = self._refresh_to_access_map.get(token_value)
+        if linked_access:
+            self._access_token_session_map.pop(linked_access, None)
+        self._prune_session_maps()
         self._persist_state()
 
 
@@ -129,7 +296,6 @@ class PersistentStaticClientOAuthProvider(_PersistentOAuthStateMixin, StaticClie
         if client is not None and not had_client and client_id in self.clients:
             self._persist_state()
         return client
-
 
 
 SEARCH_TOOL_NAMES = [

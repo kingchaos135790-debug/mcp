@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import wraps
+import inspect
 import json
 import os
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Callable, ParamSpec, Protocol, TypeVar, cast
 
 import bootstrap  # noqa: F401
 
@@ -15,6 +17,7 @@ from windows_mcp.tools import register_all
 from server_config import path_is_within
 from server_runtime import ServerContext
 from server_vscode_bridge import VSCodeBridgeServer
+from session_context import bind_current_request_session, get_current_chat_session_id
 
 
 def format_tool_result(value: object) -> str:
@@ -247,6 +250,7 @@ def extract_live_range_text(workspace_root: str, file_path: str, start_line: int
         raise ValueError("end position must be >= start position")
     return resolved, content[start_offset:end_offset]
 
+
 def run_engine_tool(context: ServerContext, tool_name: str, payload: dict[str, object]) -> object:
     try:
         return context.engine.run_tool(tool_name, payload)
@@ -288,6 +292,47 @@ def require_vscode_command_success(action: str, result: object) -> dict[str, obj
 
 def get_vscode_bridge(context: ServerContext) -> VSCodeBridgeServer:
     return cast(VSCodeBridgeServer, context.get_vscode_bridge())
+
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def bind_chat_session(session_id: str | None, *, required: bool = True) -> str:
+    requested_session_id = (session_id or "").strip()
+    if requested_session_id:
+        bound_session_id = bind_current_request_session(requested_session_id)
+        if bound_session_id:
+            return bound_session_id
+
+    current_session_id = get_current_chat_session_id()
+    if current_session_id:
+        return current_session_id
+
+    if required:
+        raise ValueError("session_id is required unless the current request is already bound to a chat session")
+    return ""
+
+
+def session_bound_tool(func: Callable[P, R]) -> Callable[P, R]:
+    signature = inspect.signature(func)
+
+    if inspect.iscoroutinefunction(func):
+        @wraps(func)
+        async def async_wrapper(*args: P.args, **kwargs: P.kwargs):
+            bound = signature.bind_partial(*args, **kwargs)
+            bound.arguments["session_id"] = bind_chat_session(cast(str | None, bound.arguments.get("session_id", "")))
+            return await cast(Any, func)(*bound.args, **bound.kwargs)
+
+        return cast(Callable[P, R], async_wrapper)
+
+    @wraps(func)
+    def sync_wrapper(*args: P.args, **kwargs: P.kwargs):
+        bound = signature.bind_partial(*args, **kwargs)
+        bound.arguments["session_id"] = bind_chat_session(cast(str | None, bound.arguments.get("session_id", "")))
+        return func(*bound.args, **bound.kwargs)
+
+    return cast(Callable[P, R], sync_wrapper)
 
 
 class ServerExtension(Protocol):
@@ -503,6 +548,7 @@ class VSCodeBridgeExtension:
             workspace_name: str = "",
             active_file: str = "",
         ) -> str:
+            session_id = bind_chat_session(session_id, required=False) or session_id
             bridge = get_vscode_bridge(context)
             assert isinstance(bridge, VSCodeBridgeServer)
             payload = {
@@ -529,7 +575,8 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
-        def close_vscode_session(session_id: str) -> str:
+        @session_bound_tool
+        def close_vscode_session(session_id: str = "") -> str:
             bridge = get_vscode_bridge(context)
             assert isinstance(bridge, VSCodeBridgeServer)
             return format_tool_result(
@@ -573,7 +620,8 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
-        def get_vscode_session(session_id: str) -> str:
+        @session_bound_tool
+        def get_vscode_session(session_id: str = "") -> str:
             bridge = get_vscode_bridge(context)
             assert isinstance(bridge, VSCodeBridgeServer)
             snapshot = bridge.state.get_session_snapshot(session_id)
@@ -592,7 +640,8 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
-        def get_vscode_context(session_id: str) -> str:
+        @session_bound_tool
+        def get_vscode_context(session_id: str = "") -> str:
             bridge = get_vscode_bridge(context)
             assert isinstance(bridge, VSCodeBridgeServer)
             return format_tool_result(
@@ -613,7 +662,8 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
-        def get_vscode_context_summary(session_id: str) -> str:
+        @session_bound_tool
+        def get_vscode_context_summary(session_id: str = "") -> str:
             bridge = get_vscode_bridge(context)
             assert isinstance(bridge, VSCodeBridgeServer)
             return format_tool_result(
@@ -634,7 +684,8 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
-        def get_vscode_diagnostics(session_id: str, severity: str = "") -> str:
+        @session_bound_tool
+        def get_vscode_diagnostics(session_id: str = "", severity: str = "") -> str:
             bridge = get_vscode_bridge(context)
             assert isinstance(bridge, VSCodeBridgeServer)
             diagnostics = bridge.state.get_diagnostics(session_id)
@@ -660,9 +711,10 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
+        @session_bound_tool
         def get_vscode_file_range(
-            session_id: str,
-            file_path: str,
+            session_id: str = "",
+            file_path: str = "",
             start_line: int = 1,
             end_line: int = 0,
             context_before: int = 0,
@@ -698,14 +750,15 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
+        @session_bound_tool
         async def request_vscode_edit(
-            session_id: str,
-            file_path: str,
-            start_line: int,
-            start_column: int,
-            end_line: int,
-            end_column: int,
-            new_text: str,
+            session_id: str = "",
+            file_path: str = "",
+            start_line: int = 0,
+            start_column: int = 0,
+            end_line: int = 0,
+            end_column: int = 0,
+            new_text: str = "",
             expected_text: str = "",
             timeout_seconds: int = 30,
         ) -> str:
@@ -756,9 +809,10 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
+        @session_bound_tool
         async def request_vscode_workspace_edit(
-            session_id: str,
-            edits_json: str,
+            session_id: str = "",
+            edits_json: str = "",
             label: str = "MCP workspace edit",
             timeout_seconds: int = 30,
         ) -> str:
@@ -848,11 +902,12 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
+        @session_bound_tool
         async def safe_vscode_edit(
-            session_id: str,
-            file_path: str,
-            search_text: str,
-            replacement_text: str,
+            session_id: str = "",
+            file_path: str = "",
+            search_text: str = "",
+            replacement_text: str = "",
             start_line: int = 1,
             end_line: int = 0,
             timeout_seconds: int = 30,
@@ -892,8 +947,17 @@ class VSCodeBridgeExtension:
                 result.setdefault("safeEdit", True)
                 result.setdefault("matchedText", live_expected_text)
                 result.setdefault("filePath", str(resolved))
-                result.setdefault("range", {"startLine": match_start_line, "startColumn": match_start_column, "endLine": match_end_line, "endColumn": match_end_column})
+                result.setdefault(
+                    "range",
+                    {
+                        "startLine": match_start_line,
+                        "startColumn": match_start_column,
+                        "endLine": match_end_line,
+                        "endColumn": match_end_column,
+                    },
+                )
             return format_tool_result(require_vscode_command_success("safe_vscode_edit", result))
+
         @mcp.tool(
             name="open_vscode_file",
             description="Ask the VS Code extension to reveal a file at a specific line and column.",
@@ -905,9 +969,10 @@ class VSCodeBridgeExtension:
                 openWorldHint=False,
             ),
         )
+        @session_bound_tool
         async def open_vscode_file(
-            session_id: str,
-            file_path: str,
+            session_id: str = "",
+            file_path: str = "",
             line: int = 1,
             column: int = 1,
             preserve_focus: bool = False,
@@ -936,8 +1001,3 @@ class VSCodeBridgeExtension:
         if isinstance(bridge, VSCodeBridgeServer):
             bridge.stop()
         context.vscode_bridge = None
-
-
-
-
-

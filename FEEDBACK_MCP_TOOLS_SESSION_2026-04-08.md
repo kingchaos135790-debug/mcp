@@ -177,3 +177,26 @@ Suggested improvement:
 Operator assessment:
 - The block itself is normal as a safety guard.
 - The repeated mismatch after fresh rereads is still worth treating as tooling friction rather than normal workflow cost.
+
+## Follow-up note from 2026-04-10 bt-hid-lua mouse-support session
+
+### 8. `PowerShell` single-shot patch writes can exceed the Windows shell invocation limit
+
+Observed behavior:
+- A single large `PowerShell` tool call that attempted to write several full source files in one command failed with `FileNotFoundError: [WinError 206] The filename or extension is too long`.
+- The failure happened while packaging multiple large here-strings and file writes into one shell invocation.
+- The practical recovery was to split the change into smaller per-file writes, which worked reliably.
+
+Why this is a problem:
+- Bulk edit workflows can fail for transport-length reasons rather than edit correctness.
+- The error surfaces as a Windows process-launch limit, not as a tool-specific guidance path.
+- It encourages manual fragmentation of otherwise straightforward batched changes.
+
+Suggested improvement:
+- Detect oversized `PowerShell` command payloads before launch and return a tool-level error with actionable guidance.
+- Offer an automatic fallback that writes a temporary script file and executes that file instead of passing the entire payload inline.
+- Document recommended payload-size limits and batching guidance for large multi-file edits.
+
+Operator assessment:
+- The workaround is simple once understood: split writes or execute a temp script.
+- The current failure mode is still worth documenting because it looks like an unrelated shell/process error from the caller side.
