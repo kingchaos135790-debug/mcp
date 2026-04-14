@@ -14,12 +14,16 @@ from windows_mcp.analytics import PostHogAnalytics
 from windows_mcp.desktop.service import Desktop
 from windows_mcp.watchdog.service import WatchDog
 
-from server_config import Config, build_auth
+from server_config import Config, build_auth, parse_bool
 from server_extensions import ServerExtension
 from server_runtime import RepositoryAutoIndexer, SearchEngineBridge, ServerContext
 
 
 logger = logging.getLogger(__name__)
+
+
+def _watchdog_enabled() -> bool:
+    return parse_bool(os.getenv("WINDOWS_MCP_WATCHDOG_ENABLED"), False)
 
 
 class ServerApp:
@@ -89,12 +93,17 @@ class ServerApp:
             self.context.analytics = PostHogAnalytics()
 
         self.context.desktop = Desktop()
-        self.context.watchdog = WatchDog()
-        self.context.watchdog.set_focus_callback(self.context.desktop.tree.on_focus_change)
         self.context.auto_indexer = RepositoryAutoIndexer(self.config, self.context.engine)
 
-        self.context.watchdog.start()
-        await asyncio.sleep(1)
+        if _watchdog_enabled():
+            logger.info("Windows UIA watchdog enabled for integrated MCP server")
+            self.context.watchdog = WatchDog()
+            self.context.watchdog.set_focus_callback(self.context.desktop.tree.on_focus_change)
+            self.context.watchdog.start()
+            await asyncio.sleep(1)
+        else:
+            logger.info("Windows UIA watchdog disabled for integrated MCP server")
+
         await self.context.auto_indexer.start()
         await self.context.auto_indexer.log_launch_status()
 

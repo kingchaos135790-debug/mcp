@@ -14,7 +14,7 @@ import fastmcp
 import bootstrap  # noqa: F401
 
 from server_app import ServerApp
-from server_config import SEARCH_TOOL_NAMES, Transport, VSCODE_TOOL_NAMES, build_config
+from server_config import SEARCH_TOOL_NAMES, Transport, VSCODE_TOOL_NAMES, build_config, parse_bool
 from server_extensions import SearchExtension, VSCodeBridgeExtension, WindowsDesktopExtension
 from session_context import get_current_boot_id, get_current_chat_session_id, normalize_chat_session_id, set_current_boot_id
 
@@ -157,7 +157,7 @@ def configure_http_runtime(transport: str, host: str, port: int) -> None:
     fastmcp.settings.set_setting("host", host)
     fastmcp.settings.set_setting("port", port)
     fastmcp.settings.set_setting("streamable_http_path", "/mcp")
-    fastmcp.settings.set_setting("stateless_http", True)
+    fastmcp.settings.set_setting("stateless_http", parse_bool(os.getenv("FASTMCP_STATELESS_HTTP"), False))
 
 
 def configure_process_diagnostics() -> tuple[str, str | None]:

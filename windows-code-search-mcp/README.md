@@ -297,11 +297,15 @@ Tunnel and origin notes:
 
 ### Concurrent access today
 
-The HTTP transport is configured for stateless streamable HTTP:
+The launcher now defaults to stateful streamable HTTP and leaves true stateless mode opt-in:
+
+- `FASTMCP_STATELESS_HTTP=false`
+
+This reduces the chance that a post-crash server restart leaves the chat holding stale stateless tool handles without any transport session to invalidate.
+
+If you explicitly want true stateless request handling again, set:
 
 - `FASTMCP_STATELESS_HTTP=true`
-
-This is good for reconnect behavior because clients do not depend on transport-level in-memory session ids that can rotate.
 
 However, the server runtime is still shared process-wide.
 
@@ -316,6 +320,12 @@ However, the server runtime is still shared process-wide.
 
 - `_config_lock` serializes repo config updates
 - `_index_lock` serializes indexing runs
+
+The integrated launcher also disables the Windows UIA watchdog thread by default:
+
+- `WINDOWS_MCP_WATCHDOG_ENABLED=false`
+
+That watchdog is only needed for live desktop focus monitoring, and disabling it avoids the `comtypes` event-pump crash path that was taking down the whole combined server during otherwise non-desktop repo work.
 
 Practical consequences:
 

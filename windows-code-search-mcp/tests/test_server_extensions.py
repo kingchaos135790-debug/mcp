@@ -24,6 +24,7 @@ sys.modules["windows_mcp.tools"] = windows_mcp_tools
 
 server_config = types.ModuleType("server_config")
 server_config.path_is_within = lambda candidate, root: True
+server_config.parse_bool = lambda value, default=False: default if value is None else value
 sys.modules["server_config"] = server_config
 
 server_runtime = types.ModuleType("server_runtime")

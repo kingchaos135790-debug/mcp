@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict
 import os
 
+import fastmcp
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from server_config import parse_bool
 from server_runtime import ServerContext
+from session_context import get_current_boot_id
 from utils.search_normalization import normalize_search_result
 
 from .common import format_tool_result, run_engine_tool
@@ -80,6 +83,11 @@ class SearchExtension:
             if isinstance(result, dict):
                 result["autoIndexConfigPath"] = context.config.managed_repositories_path
                 result["autoIndexRepositories"] = [asdict(item) for item in await context.get_auto_indexer().load_repositories()]
+                result["bootId"] = get_current_boot_id()
+                result["pid"] = os.getpid()
+                result["streamableHttpPath"] = str(getattr(fastmcp.settings, "streamable_http_path", ""))
+                result["statelessHttp"] = bool(getattr(fastmcp.settings, "stateless_http", False))
+                result["watchdogEnabled"] = parse_bool(os.getenv("WINDOWS_MCP_WATCHDOG_ENABLED"), False)
             return format_tool_result(result)
 
         @mcp.tool(

@@ -248,3 +248,103 @@ The focused bridge-state test suite passed after the change:
 - Fixed now: timeout diagnosis is centralized and remains explicit about missing poll vs. missing result
 - Still outstanding: extension-side heartbeat/session recovery in `vscode-bridge-extension/src/bridgeController.ts`
 - Still outstanding: VS Code bridge `/commands` polling/session continuity problem when no active editor session is connected
+
+
+## Implementation update: crash-path mitigation and transport default changes applied on 2026-04-14
+
+### 27. Newest logs confirmed a hard native/process crash, not a normal tool-expiry case
+The newer launcher and stdio logs changed the diagnosis materially.
+
+The confirmed sequence is:
+1. the MCP server started normally,
+2. `list_tools`, `list_indexed_repositories`, and `list_vscode_sessions` succeeded,
+3. `hybrid_code_search` emitted a warning because the search engine returned empty stdout with exit code `0`,
+4. a subsequent file read/tool call was followed by a Windows fatal exception,
+5. the Python process died with `Windows fatal exception: access violation`.
+
+This means the later invalid-tool behavior was downstream of process death, not just routine stateless-tool churn.
+
+### 28. The access-violation trace implicated the Windows UIA watchdog thread
+The crash trace in the UTF-16 stdio log showed the failing process still had the Windows UIA watchdog thread running inside:
+
+- `comtypes.client.PumpEvents`
+- `windows_mcp.watchdog.service.py`
+
+That is a stronger direct explanation than the earlier softer hypothesis that the problem was mainly auth/session continuity.
+
+In other words: the integrated MCP server was carrying an always-on desktop event-monitoring thread even during ordinary repo/search/file work, and that native UIAutomation path could crash the whole process.
+
+### 29. Stateless HTTP made the post-crash behavior more confusing, but it was not the final trigger
+The launcher was still forcing:
+
+- `FASTMCP_STATELESS_HTTP=true`
+
+That did not directly cause the access violation, but it did make the aftermath worse. After the backend process died and restarted, the chat could still hold references discovered from the earlier boot while no durable transport session existed to make the break explicit.
+
+That is why the user-visible symptom could look like:
+
+- invalid tool
+- resource not found
+- stale linked tool path
+
+So the newer evidence supports this hierarchy:
+1. primary cause: backend process crash,
+2. amplifying factor: stateless transport default,
+3. earlier warning sign: empty-stdout `hybrid_code_search` result.
+
+### 30. Mitigation applied: the launcher no longer forces stateless mode by default
+A targeted fix was applied in `E:\Program Files\mcp\launch_mcp_server.bat` and `E:\Program Files\mcp\windows-code-search-mcp\server.py`.
+
+What changed:
+- launcher default is now `FASTMCP_STATELESS_HTTP=false`
+- the launcher logs `HTTP stateless mode: <value>` instead of hardcoding `stateless`
+- `server.py` now reads `FASTMCP_STATELESS_HTTP` from the environment instead of always calling `fastmcp.settings.set_setting("stateless_http", True)`
+
+This makes true stateless mode opt-in rather than mandatory.
+
+### 31. Mitigation applied: the integrated server no longer starts the Windows UIA watchdog by default
+A second targeted fix was applied in `E:\Program Files\mcp\windows-code-search-mcp\server_app.py`.
+
+What changed:
+- new env flag: `WINDOWS_MCP_WATCHDOG_ENABLED`
+- launcher default: `WINDOWS_MCP_WATCHDOG_ENABLED=false`
+- the integrated MCP server now starts `WatchDog()` only when that flag is explicitly enabled
+
+This is important because the observed crash trace went through the watchdog event-pump path. Disabling that thread by default removes the most obvious native crash path from ordinary MCP repo work.
+
+### 32. Diagnostics were also improved so future restarts are easier to recognize
+`server_health` in `E:\Program Files\mcp\windows-code-search-mcp\extensions\search.py` now reports:
+
+- `bootId`
+- `pid`
+- `streamableHttpPath`
+- `statelessHttp`
+- `watchdogEnabled`
+
+That should make it easier to tell whether a later tool error belongs to the same backend boot or to a restarted process with different runtime settings.
+
+### 33. Focused tests were added and passed
+New tests added:
+- `windows-code-search-mcp/tests/test_server_http_runtime.py`
+- `windows-code-search-mcp/tests/test_server_app_watchdog.py`
+
+Focused verification passed:
+- `test_server_http_runtime.py`
+- `test_server_app_watchdog.py`
+- `test_server_runtime.py`
+- `test_server_extensions.py`
+- `test_server_config_oauth.py`
+
+### 34. Updated assessment
+The strongest current explanation is now:
+
+1. the integrated backend process crashed with a Windows access violation,
+2. the active crash path likely involved the Windows UIA watchdog/comtypes event loop,
+3. stateless HTTP then made post-crash tool invalidation look like stale tool/resource behavior instead of a clear session break.
+
+### 35. Updated status after the new fix
+- Fixed now: launcher no longer forces stateless HTTP by default
+- Fixed now: integrated server no longer starts the Windows UIA watchdog by default
+- Fixed now: `server_health` exposes boot/runtime mode details for diagnosis
+- Still worth investigating: why `hybrid_code_search` occasionally returns empty stdout with exit code `0`
+- Still possible but secondary: OAuth/session continuity issues can still contribute noise after restarts or reauth, but they are no longer the strongest explanation for the invalid-tool symptom seen in the newest logs
