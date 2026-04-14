@@ -180,6 +180,9 @@ def configure_process_diagnostics() -> tuple[str, str | None]:
 
     if not any(isinstance(existing, SessionContextFilter) for existing in root_logger.filters):
         root_logger.addFilter(SessionContextFilter())
+    for handler in root_logger.handlers:
+        if not any(isinstance(existing, SessionContextFilter) for existing in handler.filters):
+            handler.addFilter(SessionContextFilter())
 
     log_path = _build_runtime_log_path(log_dir_text, runtime_log_text, boot_id)
     if log_path is not None:

@@ -7,16 +7,22 @@ Single MCP server that combines:
 
 It reuses the Windows-MCP OAuth environment format and does not modify the original `Windows-MCP` source tree.
 
-## Files
+## Files and packages
 
-- `server.py` - integrated FastMCP server
+- `server.py` - integrated FastMCP server entrypoint
 - `server_app.py` - application composition and lifecycle orchestration
-- `server_extensions.py` - pluggable MCP feature registration layer
-- `server_runtime.py` - shared runtime services for search and auto-indexing
-- `server_vscode_bridge.py` - local HTTP bridge for VS Code context, diagnostics, and edit requests
-- `server_config.py` - config parsing and shared server settings
+- `server_extensions.py` - thin compatibility and composition layer for MCP feature registration
+- `server_runtime.py` - thin compatibility re-export layer for the `runtime` package
+- `server_config.py` - thin compatibility re-export layer for the `config` package
+- `server_vscode_bridge.py` - thin compatibility re-export layer for the `vscode_bridge` package
+- `extensions/` - feature registration modules for search, desktop, VS Code session, and VS Code edit tools
+- `runtime/` - shared runtime services such as `ServerContext`, the search bridge, and repository auto-indexing
+- `config/` - config models, environment loading, managed-repository helpers, and OAuth persistence
+- `vscode_bridge/` - internal bridge package for bridge models, state, transport, and server orchestration
+- `utils/` - extracted helper modules for normalization and file-range behavior
 - `repo_manager.py` - local folder-picker GUI for managed repo paths
 - `managed-repositories.json` - local persisted repo config
+- `oauth-state.json` - local persisted OAuth provider state
 - `vscode-bridge-extension` - starter VS Code extension for context-window and IDE bridge sync
 - `..\\launch_windows_code_search_chatgpt_python.bat` - ChatGPT/OAuth launcher
 - `..\\open_windows_code_search_repo_manager.bat` - open the local repo manager window
@@ -26,7 +32,7 @@ It reuses the Windows-MCP OAuth environment format and does not modify the origi
 The server now composes features through extension classes instead of registering
 everything in one monolithic file.
 
-- add new MCP functionality by creating another extension in `server_extensions.py`
+- add new MCP functionality by creating another extension in `extensions/` and keep `server_extensions.py` as the thin composition layer
 - register it in `server.py` when constructing `ServerApp`
 - use `ServerContext` from `server_runtime.py` to access shared services like the search bridge, auto-indexer, desktop service, or analytics
 
@@ -421,4 +427,8 @@ Until interactive runtimes become session-scoped, document the edit contract as:
 - re-read the file after each successful write before issuing another edit
 
 That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.
+
+
+
+
 

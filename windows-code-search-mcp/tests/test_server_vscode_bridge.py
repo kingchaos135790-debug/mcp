@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import sys
 import types
 import unittest
+from unittest.mock import Mock
 
 
 server_config = types.ModuleType("server_config")
@@ -57,6 +58,18 @@ class VSCodeBridgeStateTests(unittest.TestCase):
 
         with self.assertRaisesRegex(TimeoutError, "no command poll was observed"):
             state.wait_for_command(command, 0.01)
+
+    def test_wait_for_command_fails_fast_when_no_poll_is_observed(self) -> None:
+        state = VSCodeBridgeState()
+        state.heartbeat_session("session-1", {})
+        command = state.enqueue_command("session-1", "apply_edit", {})
+        command.completion_event = Mock()
+        command.completion_event.wait.return_value = False
+
+        with self.assertRaisesRegex(TimeoutError, "within 5.00s"):
+            state.wait_for_command(command, 30)
+
+        command.completion_event.wait.assert_called_once_with(5.0)
 
     def test_wait_for_command_timeout_reports_missing_result_after_claim(self) -> None:
         state = VSCodeBridgeState()

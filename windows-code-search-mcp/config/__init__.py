@@ -1,23 +1,19 @@
-from __future__ import annotations
-
-import bootstrap  # noqa: F401
-
-from config.loader import build_config, parse_bool, parse_list, server_root
-from config.managed_repositories import (
+from .loader import build_config, parse_bool, parse_list, server_root
+from .managed_repositories import (
     coerce_int,
     format_index_result_summary,
     index_root_display,
     normalize_repo_root,
     path_is_within,
 )
-from config.models import (
+from .models import (
     SEARCH_TOOL_NAMES,
     VSCODE_TOOL_NAMES,
     Config,
     ManagedRepository,
     Transport,
 )
-from config.oauth_state import (
+from .oauth_state import (
     PersistentInMemoryOAuthProvider,
     PersistentStaticClientOAuthProvider,
     build_auth,

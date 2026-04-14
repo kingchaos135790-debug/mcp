@@ -6,7 +6,7 @@
       "watch": true,
       "auto_index_on_start": true,
       "last_indexed_at": "2026-04-11T14:45:19.006014Z",
-      "last_index_reason": "manual",
+      "last_index_reason": "startup",
       "last_result": {
         "repoId": "bt-hid-lua-81096602efa7",
         "repoName": "bt-hid-lua",
