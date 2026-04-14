@@ -39,6 +39,8 @@ exports.createSelectionItem = createSelectionItem;
 exports.createDocumentItem = createDocumentItem;
 exports.createFolderSummaryItem = createFolderSummaryItem;
 exports.buildFolderSummary = buildFolderSummary;
+exports.collectFolderFiles = collectFolderFiles;
+exports.tryResolveDroppedUri = tryResolveDroppedUri;
 const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
 const constants_1 = require("./constants");
@@ -153,5 +155,59 @@ async function buildFolderSummary(root) {
         directoryCount,
         truncated
     };
+}
+async function collectFolderFiles(root) {
+    const results = [];
+    const queue = [root];
+    while (queue.length > 0 && results.length < constants_1.MAX_FOLDER_FILES) {
+        const current = queue.shift();
+        if (!current) {
+            break;
+        }
+        let entries = [];
+        try {
+            entries = await vscode.workspace.fs.readDirectory(current);
+        }
+        catch {
+            continue;
+        }
+        for (const [name, type] of entries.sort(([left], [right]) => left.localeCompare(right))) {
+            if (results.length >= constants_1.MAX_FOLDER_FILES) {
+                break;
+            }
+            const child = vscode.Uri.joinPath(current, name);
+            if (type & vscode.FileType.Directory) {
+                if (!constants_1.SKIPPED_DIRECTORY_NAMES.has(name.toLowerCase())) {
+                    queue.push(child);
+                }
+                continue;
+            }
+            if (type & vscode.FileType.File) {
+                results.push(child);
+            }
+        }
+    }
+    return results;
+}
+function tryResolveDroppedUri(candidate) {
+    const cleaned = candidate.replace(/^file:\/\//i, 'file://').trim();
+    try {
+        const parsed = vscode.Uri.parse(cleaned);
+        if (parsed.scheme === 'file' && parsed.fsPath) {
+            return parsed;
+        }
+    }
+    catch {
+        // Ignore and try path-based resolution next.
+    }
+    const stripped = cleaned.replace(/^['"]|['"]$/g, '');
+    if (path.isAbsolute(stripped)) {
+        return vscode.Uri.file(stripped);
+    }
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (folder) {
+        return vscode.Uri.joinPath(folder.uri, stripped);
+    }
+    return undefined;
 }
 //# sourceMappingURL=contextHelpers.js.map

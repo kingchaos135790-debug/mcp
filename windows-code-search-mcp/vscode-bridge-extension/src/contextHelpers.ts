@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { MAX_FOLDER_SUMMARY_ENTRIES, SKIPPED_DIRECTORY_NAMES } from './constants';
+import { MAX_FOLDER_FILES, MAX_FOLDER_SUMMARY_ENTRIES, SKIPPED_DIRECTORY_NAMES } from './constants';
 import { ContextItem, FolderSummary } from './types';
 
 export function looksBinary(content: string): boolean {
@@ -128,4 +128,63 @@ export async function buildFolderSummary(root: vscode.Uri): Promise<FolderSummar
     directoryCount,
     truncated
   };
+}
+
+export async function collectFolderFiles(root: vscode.Uri): Promise<vscode.Uri[]> {
+  const results: vscode.Uri[] = [];
+  const queue: vscode.Uri[] = [root];
+
+  while (queue.length > 0 && results.length < MAX_FOLDER_FILES) {
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+    let entries: [string, vscode.FileType][] = [];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(current);
+    } catch {
+      continue;
+    }
+
+    for (const [name, type] of entries.sort(([left], [right]) => left.localeCompare(right))) {
+      if (results.length >= MAX_FOLDER_FILES) {
+        break;
+      }
+      const child = vscode.Uri.joinPath(current, name);
+      if (type & vscode.FileType.Directory) {
+        if (!SKIPPED_DIRECTORY_NAMES.has(name.toLowerCase())) {
+          queue.push(child);
+        }
+        continue;
+      }
+      if (type & vscode.FileType.File) {
+        results.push(child);
+      }
+    }
+  }
+
+  return results;
+}
+
+export function tryResolveDroppedUri(candidate: string): vscode.Uri | undefined {
+  const cleaned = candidate.replace(/^file:\/\//i, 'file://').trim();
+  try {
+    const parsed = vscode.Uri.parse(cleaned);
+    if (parsed.scheme === 'file' && parsed.fsPath) {
+      return parsed;
+    }
+  } catch {
+    // Ignore and try path-based resolution next.
+  }
+
+  const stripped = cleaned.replace(/^['"]|['"]$/g, '');
+  if (path.isAbsolute(stripped)) {
+    return vscode.Uri.file(stripped);
+  }
+
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder) {
+    return vscode.Uri.joinPath(folder.uri, stripped);
+  }
+  return undefined;
 }

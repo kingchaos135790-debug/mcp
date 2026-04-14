@@ -2,14 +2,16 @@
 import * as vscode from 'vscode';
 
 import { BridgeClient } from './bridgeClient';
-import { MAX_FILE_BYTES, MAX_FOLDER_FILES, SKIPPED_DIRECTORY_NAMES } from './constants';
-import { buildFolderSummary, createDocumentItem, createFolderSummaryItem, createSelectionItem, createSnippetItem, looksBinary } from './contextHelpers';
+import { CommandHandler } from './commandHandler';
+import { MAX_FILE_BYTES } from './constants';
+import { buildFolderSummary, collectFolderFiles, createDocumentItem, createFolderSummaryItem, createSelectionItem, createSnippetItem, looksBinary, tryResolveDroppedUri } from './contextHelpers';
 import { ContextStore } from './contextStore';
 import { BridgeCommand, ContextItem, FolderImportResult, NoticeKind, WebviewState } from './types';
 import { renderWebview } from './webview';
 
 export class BridgeController implements vscode.Disposable {
   private readonly bridgeClient: BridgeClient;
+  private readonly commandHandler: CommandHandler;
   private readonly contextStore: ContextStore;
   private readonly sessionId: string;
   private readonly workspaceName: string;
@@ -18,6 +20,7 @@ export class BridgeController implements vscode.Disposable {
   private readonly statusBarItem: vscode.StatusBarItem;
   private view: vscode.WebviewView | undefined;
   private pollTimer: NodeJS.Timeout | undefined;
+  private heartbeatTimer: NodeJS.Timeout | undefined;
   private polling = false;
   private notice: WebviewState['notice'];
 
@@ -32,6 +35,8 @@ export class BridgeController implements vscode.Disposable {
     const savedSessionId = extensionContext.workspaceState.get<string>('windowsCodeSearchBridge.sessionId');
     this.sessionId = savedSessionId ?? `${this.workspaceName.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase() || 'workspace'}-${Date.now().toString(36)}`;
     void extensionContext.workspaceState.update('windowsCodeSearchBridge.sessionId', this.sessionId);
+
+    this.commandHandler = new CommandHandler(this.bridgeClient, this.sessionId);
 
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
     this.statusBarItem.command = 'windowsCodeSearchBridge.pushNow';
@@ -61,12 +66,16 @@ export class BridgeController implements vscode.Disposable {
     );
 
     this.startPolling();
+    this.startHeartbeat();
     void this.pushNow();
   }
 
   dispose(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
     }
     vscode.Disposable.from(...this.disposables).dispose();
   }
@@ -300,14 +309,16 @@ export class BridgeController implements vscode.Disposable {
   }
 
   async pushNow(): Promise<void> {
-    await this.pushContext();
-    await this.pushDiagnostics();
-    this.setNotice('success', 'Pushed context and diagnostics to the bridge.');
+    const contextOk = await this.pushContext();
+    const diagnosticsOk = await this.pushDiagnostics();
+    if (contextOk && diagnosticsOk) {
+      this.setNotice('success', 'Pushed context and diagnostics to the bridge.');
+      vscode.window.setStatusBarMessage('Code search bridge pushed context and diagnostics.', 2500);
+    }
     this.refreshWebview();
-    vscode.window.setStatusBarMessage('Code search bridge pushed context and diagnostics.', 2500);
   }
 
-  async pushContext(): Promise<void> {
+  async pushContext(): Promise<boolean> {
     try {
       const items = await this.hydrateContextItems();
       await this.bridgeClient.postJson(`/sessions/${encodeURIComponent(this.sessionId)}/context`, {
@@ -316,12 +327,14 @@ export class BridgeController implements vscode.Disposable {
         activeFile: vscode.window.activeTextEditor?.document.uri.fsPath ?? '',
         items
       });
+      return true;
     } catch (error) {
       this.showBridgeError('Failed to push context', error, false);
+      return false;
     }
   }
 
-  async pushDiagnostics(): Promise<void> {
+  async pushDiagnostics(): Promise<boolean> {
     try {
       await this.bridgeClient.postJson(`/sessions/${encodeURIComponent(this.sessionId)}/diagnostics`, {
         workspaceRoot: this.workspaceRoot,
@@ -329,8 +342,10 @@ export class BridgeController implements vscode.Disposable {
         activeFile: vscode.window.activeTextEditor?.document.uri.fsPath ?? '',
         diagnostics: this.collectDiagnostics()
       });
+      return true;
     } catch (error) {
       this.showBridgeError('Failed to push diagnostics', error, false);
+      return false;
     }
   }
 
@@ -480,7 +495,7 @@ export class BridgeController implements vscode.Disposable {
 
     let added = 0;
     for (const candidate of candidates) {
-      const uri = this.tryResolveDroppedUri(candidate);
+      const uri = tryResolveDroppedUri(candidate);
       if (!uri) {
         continue;
       }
@@ -518,29 +533,6 @@ export class BridgeController implements vscode.Disposable {
     this.refreshWebview();
   }
 
-  private tryResolveDroppedUri(candidate: string): vscode.Uri | undefined {
-    const cleaned = candidate.replace(/^file:\/\//i, 'file://').trim();
-    try {
-      const parsed = vscode.Uri.parse(cleaned);
-      if (parsed.scheme === 'file' && parsed.fsPath) {
-        return parsed;
-      }
-    } catch {
-      // Ignore and try path-based resolution next.
-    }
-
-    const stripped = cleaned.replace(/^['"]|['"]$/g, '');
-    if (path.isAbsolute(stripped)) {
-      return vscode.Uri.file(stripped);
-    }
-
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (folder) {
-      return vscode.Uri.joinPath(folder.uri, stripped);
-    }
-    return undefined;
-  }
-
   private async addDocument(document: vscode.TextDocument, kind: 'file' | 'selection', pushImmediately: boolean = true): Promise<void> {
     if (document.uri.scheme !== 'file') {
       vscode.window.showWarningMessage(`Skipping non-file document: ${document.uri.toString()}`);
@@ -557,7 +549,7 @@ export class BridgeController implements vscode.Disposable {
   }
 
   private async addFolderResource(folder: vscode.Uri, pushImmediately: boolean = true): Promise<FolderImportResult> {
-    const fileUris = await this.collectFolderFiles(folder);
+    const fileUris = await collectFolderFiles(folder);
     let added = 0;
     let skipped = 0;
 
@@ -594,42 +586,6 @@ export class BridgeController implements vscode.Disposable {
     return { added, skipped };
   }
 
-  private async collectFolderFiles(root: vscode.Uri): Promise<vscode.Uri[]> {
-    const results: vscode.Uri[] = [];
-    const queue: vscode.Uri[] = [root];
-
-    while (queue.length > 0 && results.length < MAX_FOLDER_FILES) {
-      const current = queue.shift();
-      if (!current) {
-        break;
-      }
-      let entries: [string, vscode.FileType][] = [];
-      try {
-        entries = await vscode.workspace.fs.readDirectory(current);
-      } catch {
-        continue;
-      }
-
-      for (const [name, type] of entries.sort(([left], [right]) => left.localeCompare(right))) {
-        if (results.length >= MAX_FOLDER_FILES) {
-          break;
-        }
-        const child = vscode.Uri.joinPath(current, name);
-        if (type & vscode.FileType.Directory) {
-          if (!SKIPPED_DIRECTORY_NAMES.has(name.toLowerCase())) {
-            queue.push(child);
-          }
-          continue;
-        }
-        if (type & vscode.FileType.File) {
-          results.push(child);
-        }
-      }
-    }
-
-    return results;
-  }
-
   private startPolling(): void {
     const interval = Math.max(500, vscode.workspace.getConfiguration('windowsCodeSearchBridge').get<number>('pollIntervalMs', 1500));
     this.pollTimer = setInterval(() => {
@@ -644,6 +600,24 @@ export class BridgeController implements vscode.Disposable {
       this.pollTimer = undefined;
     }
     this.startPolling();
+  }
+
+  private startHeartbeat(): void {
+    const interval = Math.max(5000, vscode.workspace.getConfiguration('windowsCodeSearchBridge').get<number>('heartbeatIntervalMs', 30000));
+    this.heartbeatTimer = setInterval(() => {
+      void this.pushContext();
+      if (this.autoPushDiagnosticsEnabled()) {
+        void this.pushDiagnostics();
+      }
+    }, interval);
+  }
+
+  private restartHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    this.startHeartbeat();
   }
 
   private async pollCommands(): Promise<void> {
@@ -665,135 +639,23 @@ export class BridgeController implements vscode.Disposable {
 
   private async handleCommand(command: BridgeCommand): Promise<void> {
     try {
-      let payload: any = {};
-      switch (command.type) {
-        case 'apply_edit':
-          payload = await this.applyEdit(command.payload);
-          break;
-        case 'apply_workspace_edit':
-          payload = await this.applyWorkspaceEdit(command.payload);
-          break;
-        case 'open_file':
-          payload = await this.openFile(command.payload);
-          break;
-        default:
-          throw new Error(`Unsupported bridge command: ${command.type}`);
-      }
-      await this.reportCommandResult(command.commandId, {
+      const { payload, isEdit } = await this.commandHandler.execute(command);
+      await this.commandHandler.reportResult(command.commandId, {
         status: 'ok',
         payload
       });
-      if (command.type === 'apply_edit' || command.type === 'apply_workspace_edit') {
+      if (isEdit) {
         await this.pushContext();
         if (this.autoPushDiagnosticsEnabled()) {
           await this.pushDiagnostics();
         }
       }
     } catch (error) {
-      await this.reportCommandResult(command.commandId, {
+      await this.commandHandler.reportResult(command.commandId, {
         status: 'error',
         error: error instanceof Error ? error.message : String(error)
       });
     }
-  }
-
-  private async applyEdit(payload: any): Promise<any> {
-    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(String(payload.filePath)));
-    const range = this.toRange(payload.range);
-    const expectedText = String(payload.expectedText ?? '');
-    if (expectedText) {
-      const actual = document.getText(range);
-      if (actual !== expectedText) {
-        throw new Error(`Expected text mismatch before applying edit. file=${document.uri.fsPath} range=${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1} expected=${JSON.stringify(expectedText.length > 200 ? `${expectedText.slice(0, 200)}...` : expectedText)} actual=${JSON.stringify(actual.length > 200 ? `${actual.slice(0, 200)}...` : actual)}`);
-      }
-    }
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(document.uri, range, String(payload.newText ?? ''));
-    const applied = await vscode.workspace.applyEdit(edit);
-    if (!applied) {
-      throw new Error('VS Code rejected the edit.');
-    }
-    if (vscode.workspace.getConfiguration('windowsCodeSearchBridge').get<boolean>('saveAfterApplyEdit', true)) {
-      await document.save();
-    }
-    return {
-      filePath: document.uri.fsPath,
-      applied: true
-    };
-  }
-
-  private async applyWorkspaceEdit(payload: any): Promise<any> {
-    const edits = Array.isArray(payload.edits) ? payload.edits : [];
-    const workspaceEdit = new vscode.WorkspaceEdit();
-    for (const item of edits) {
-      const filePath = String(item.filePath ?? item.file_path ?? '');
-      if (!filePath) {
-        throw new Error('Workspace edit item is missing filePath.');
-      }
-      const rangePayload = item.range ?? {
-        startLine: item.startLine ?? item.start_line,
-        startColumn: item.startColumn ?? item.start_column,
-        endLine: item.endLine ?? item.end_line,
-        endColumn: item.endColumn ?? item.end_column,
-      };
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-      const range = this.toRange(rangePayload);
-      const expectedText = String(item.expectedText ?? item.expected_text ?? '');
-      if (expectedText) {
-        const actual = document.getText(range);
-        if (actual !== expectedText) {
-          throw new Error(`Expected text mismatch before workspace edit. file=${document.uri.fsPath} range=${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1} expected=${JSON.stringify(expectedText.length > 200 ? `${expectedText.slice(0, 200)}...` : expectedText)} actual=${JSON.stringify(actual.length > 200 ? `${actual.slice(0, 200)}...` : actual)}`);
-        }
-      }
-      workspaceEdit.replace(document.uri, range, String(item.newText ?? item.new_text ?? ''));
-    }
-    const applied = await vscode.workspace.applyEdit(workspaceEdit);
-    if (!applied) {
-      throw new Error('VS Code rejected the workspace edit.');
-    }
-    if (vscode.workspace.getConfiguration('windowsCodeSearchBridge').get<boolean>('saveAfterApplyEdit', true)) {
-      for (const item of edits) {
-        const filePath = String(item.filePath ?? item.file_path ?? '');
-        if (!filePath) {
-          continue;
-        }
-        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-        await document.save();
-      }
-    }
-    return {
-      applied: true,
-      editCount: edits.length,
-      label: String(payload.label ?? 'MCP workspace edit')
-    };
-  }
-
-  private async openFile(payload: any): Promise<any> {
-    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(String(payload.filePath)));
-    const line = Math.max(1, Number(payload.line ?? 1));
-    const column = Math.max(1, Number(payload.column ?? 1));
-    const position = new vscode.Position(line - 1, column - 1);
-    await vscode.window.showTextDocument(document, {
-      preserveFocus: Boolean(payload.preserveFocus),
-      selection: new vscode.Range(position, position)
-    });
-    return {
-      filePath: document.uri.fsPath,
-      line,
-      column
-    };
-  }
-
-  private toRange(input: any): vscode.Range {
-    const startLine = Math.max(1, Number(input?.startLine ?? 1));
-    const startColumn = Math.max(1, Number(input?.startColumn ?? 1));
-    const endLine = Math.max(1, Number(input?.endLine ?? startLine));
-    const endColumn = Math.max(1, Number(input?.endColumn ?? startColumn));
-    return new vscode.Range(startLine - 1, startColumn - 1, endLine - 1, endColumn - 1);
-  }
-
-  private async reportCommandResult(commandId: string, payload: any): Promise<void> {
-    await this.bridgeClient.postJson(`/sessions/${encodeURIComponent(this.sessionId)}/commands/${encodeURIComponent(commandId)}/result`, payload);
   }
 
   private autoPushDiagnosticsEnabled(): boolean {
@@ -803,6 +665,10 @@ export class BridgeController implements vscode.Disposable {
   private handleConfigurationChange(event: vscode.ConfigurationChangeEvent): void {
     if (event.affectsConfiguration('windowsCodeSearchBridge.pollIntervalMs')) {
       this.restartPolling();
+    }
+
+    if (event.affectsConfiguration('windowsCodeSearchBridge.heartbeatIntervalMs')) {
+      this.restartHeartbeat();
     }
 
     if (

@@ -140,6 +140,12 @@
           "minimum": 500,
           "description": "How often the extension polls for bridge commands."
         },
+        "windowsCodeSearchBridge.heartbeatIntervalMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "description": "How often the extension sends a heartbeat push of context and diagnostics to keep the bridge session alive."
+        },
         "windowsCodeSearchBridge.autoPushDiagnostics": {
           "type": "boolean",
           "default": true,
@@ -157,7 +163,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npx @vscode/vsce package --no-dependencies"
+    "package": "npx @vscode/vsce package --no-dependencies --allow-missing-repository --allow-star-activation"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

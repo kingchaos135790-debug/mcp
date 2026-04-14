@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -37,6 +37,7 @@ exports.BridgeController = void 0;
 const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
 const bridgeClient_1 = require("./bridgeClient");
+const commandHandler_1 = require("./commandHandler");
 const constants_1 = require("./constants");
 const contextHelpers_1 = require("./contextHelpers");
 const contextStore_1 = require("./contextStore");
@@ -44,6 +45,7 @@ const webview_1 = require("./webview");
 class BridgeController {
     extensionContext;
     bridgeClient;
+    commandHandler;
     contextStore;
     sessionId;
     workspaceName;
@@ -52,6 +54,7 @@ class BridgeController {
     statusBarItem;
     view;
     pollTimer;
+    heartbeatTimer;
     polling = false;
     notice;
     constructor(extensionContext) {
@@ -64,6 +67,7 @@ class BridgeController {
         const savedSessionId = extensionContext.workspaceState.get('windowsCodeSearchBridge.sessionId');
         this.sessionId = savedSessionId ?? `${this.workspaceName.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase() || 'workspace'}-${Date.now().toString(36)}`;
         void extensionContext.workspaceState.update('windowsCodeSearchBridge.sessionId', this.sessionId);
+        this.commandHandler = new commandHandler_1.CommandHandler(this.bridgeClient, this.sessionId);
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
         this.statusBarItem.command = 'windowsCodeSearchBridge.pushNow';
         this.statusBarItem.text = `Code Search: ${this.sessionId}`;
@@ -85,11 +89,15 @@ class BridgeController {
             }
         }));
         this.startPolling();
+        this.startHeartbeat();
         void this.pushNow();
     }
     dispose() {
         if (this.pollTimer) {
             clearInterval(this.pollTimer);
+        }
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
         }
         vscode.Disposable.from(...this.disposables).dispose();
     }
@@ -306,11 +314,13 @@ class BridgeController {
         await this.restartBridgeServer(previousBaseUrl);
     }
     async pushNow() {
-        await this.pushContext();
-        await this.pushDiagnostics();
-        this.setNotice('success', 'Pushed context and diagnostics to the bridge.');
+        const contextOk = await this.pushContext();
+        const diagnosticsOk = await this.pushDiagnostics();
+        if (contextOk && diagnosticsOk) {
+            this.setNotice('success', 'Pushed context and diagnostics to the bridge.');
+            vscode.window.setStatusBarMessage('Code search bridge pushed context and diagnostics.', 2500);
+        }
         this.refreshWebview();
-        vscode.window.setStatusBarMessage('Code search bridge pushed context and diagnostics.', 2500);
     }
     async pushContext() {
         try {
@@ -321,9 +331,11 @@ class BridgeController {
                 activeFile: vscode.window.activeTextEditor?.document.uri.fsPath ?? '',
                 items
             });
+            return true;
         }
         catch (error) {
             this.showBridgeError('Failed to push context', error, false);
+            return false;
         }
     }
     async pushDiagnostics() {
@@ -334,9 +346,11 @@ class BridgeController {
                 activeFile: vscode.window.activeTextEditor?.document.uri.fsPath ?? '',
                 diagnostics: this.collectDiagnostics()
             });
+            return true;
         }
         catch (error) {
             this.showBridgeError('Failed to push diagnostics', error, false);
+            return false;
         }
     }
     async addResource(resource) {
@@ -476,7 +490,7 @@ class BridgeController {
             .filter(Boolean);
         let added = 0;
         for (const candidate of candidates) {
-            const uri = this.tryResolveDroppedUri(candidate);
+            const uri = (0, contextHelpers_1.tryResolveDroppedUri)(candidate);
             if (!uri) {
                 continue;
             }
@@ -511,27 +525,6 @@ class BridgeController {
         this.setNotice('warning', 'Drop was detected, but no readable file or text payload was found.');
         this.refreshWebview();
     }
-    tryResolveDroppedUri(candidate) {
-        const cleaned = candidate.replace(/^file:\/\//i, 'file://').trim();
-        try {
-            const parsed = vscode.Uri.parse(cleaned);
-            if (parsed.scheme === 'file' && parsed.fsPath) {
-                return parsed;
-            }
-        }
-        catch {
-            // Ignore and try path-based resolution next.
-        }
-        const stripped = cleaned.replace(/^['"]|['"]$/g, '');
-        if (path.isAbsolute(stripped)) {
-            return vscode.Uri.file(stripped);
-        }
-        const folder = vscode.workspace.workspaceFolders?.[0];
-        if (folder) {
-            return vscode.Uri.joinPath(folder.uri, stripped);
-        }
-        return undefined;
-    }
     async addDocument(document, kind, pushImmediately = true) {
         if (document.uri.scheme !== 'file') {
             vscode.window.showWarningMessage(`Skipping non-file document: ${document.uri.toString()}`);
@@ -547,7 +540,7 @@ class BridgeController {
         this.refreshWebview();
     }
     async addFolderResource(folder, pushImmediately = true) {
-        const fileUris = await this.collectFolderFiles(folder);
+        const fileUris = await (0, contextHelpers_1.collectFolderFiles)(folder);
         let added = 0;
         let skipped = 0;
         for (const uri of fileUris) {
@@ -581,39 +574,6 @@ class BridgeController {
         this.refreshWebview();
         return { added, skipped };
     }
-    async collectFolderFiles(root) {
-        const results = [];
-        const queue = [root];
-        while (queue.length > 0 && results.length < constants_1.MAX_FOLDER_FILES) {
-            const current = queue.shift();
-            if (!current) {
-                break;
-            }
-            let entries = [];
-            try {
-                entries = await vscode.workspace.fs.readDirectory(current);
-            }
-            catch {
-                continue;
-            }
-            for (const [name, type] of entries.sort(([left], [right]) => left.localeCompare(right))) {
-                if (results.length >= constants_1.MAX_FOLDER_FILES) {
-                    break;
-                }
-                const child = vscode.Uri.joinPath(current, name);
-                if (type & vscode.FileType.Directory) {
-                    if (!constants_1.SKIPPED_DIRECTORY_NAMES.has(name.toLowerCase())) {
-                        queue.push(child);
-                    }
-                    continue;
-                }
-                if (type & vscode.FileType.File) {
-                    results.push(child);
-                }
-            }
-        }
-        return results;
-    }
     startPolling() {
         const interval = Math.max(500, vscode.workspace.getConfiguration('windowsCodeSearchBridge').get('pollIntervalMs', 1500));
         this.pollTimer = setInterval(() => {
@@ -627,6 +587,22 @@ class BridgeController {
             this.pollTimer = undefined;
         }
         this.startPolling();
+    }
+    startHeartbeat() {
+        const interval = Math.max(5000, vscode.workspace.getConfiguration('windowsCodeSearchBridge').get('heartbeatIntervalMs', 30000));
+        this.heartbeatTimer = setInterval(() => {
+            void this.pushContext();
+            if (this.autoPushDiagnosticsEnabled()) {
+                void this.pushDiagnostics();
+            }
+        }, interval);
+    }
+    restartHeartbeat() {
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = undefined;
+        }
+        this.startHeartbeat();
     }
     async pollCommands() {
         if (this.polling) {
@@ -648,25 +624,12 @@ class BridgeController {
     }
     async handleCommand(command) {
         try {
-            let payload = {};
-            switch (command.type) {
-                case 'apply_edit':
-                    payload = await this.applyEdit(command.payload);
-                    break;
-                case 'apply_workspace_edit':
-                    payload = await this.applyWorkspaceEdit(command.payload);
-                    break;
-                case 'open_file':
-                    payload = await this.openFile(command.payload);
-                    break;
-                default:
-                    throw new Error(`Unsupported bridge command: ${command.type}`);
-            }
-            await this.reportCommandResult(command.commandId, {
+            const { payload, isEdit } = await this.commandHandler.execute(command);
+            await this.commandHandler.reportResult(command.commandId, {
                 status: 'ok',
                 payload
             });
-            if (command.type === 'apply_edit' || command.type === 'apply_workspace_edit') {
+            if (isEdit) {
                 await this.pushContext();
                 if (this.autoPushDiagnosticsEnabled()) {
                     await this.pushDiagnostics();
@@ -674,105 +637,11 @@ class BridgeController {
             }
         }
         catch (error) {
-            await this.reportCommandResult(command.commandId, {
+            await this.commandHandler.reportResult(command.commandId, {
                 status: 'error',
                 error: error instanceof Error ? error.message : String(error)
             });
         }
-    }
-    async applyEdit(payload) {
-        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(String(payload.filePath)));
-        const range = this.toRange(payload.range);
-        const expectedText = String(payload.expectedText ?? '');
-        if (expectedText) {
-            const actual = document.getText(range);
-            if (actual !== expectedText) {
-                throw new Error(`Expected text mismatch before applying edit. file=${document.uri.fsPath} range=${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1} expected=${JSON.stringify(expectedText.length > 200 ? `${expectedText.slice(0, 200)}...` : expectedText)} actual=${JSON.stringify(actual.length > 200 ? `${actual.slice(0, 200)}...` : actual)}`);
-            }
-        }
-        const edit = new vscode.WorkspaceEdit();
-        edit.replace(document.uri, range, String(payload.newText ?? ''));
-        const applied = await vscode.workspace.applyEdit(edit);
-        if (!applied) {
-            throw new Error('VS Code rejected the edit.');
-        }
-        if (vscode.workspace.getConfiguration('windowsCodeSearchBridge').get('saveAfterApplyEdit', true)) {
-            await document.save();
-        }
-        return {
-            filePath: document.uri.fsPath,
-            applied: true
-        };
-    }
-    async applyWorkspaceEdit(payload) {
-        const edits = Array.isArray(payload.edits) ? payload.edits : [];
-        const workspaceEdit = new vscode.WorkspaceEdit();
-        for (const item of edits) {
-            const filePath = String(item.filePath ?? item.file_path ?? '');
-            if (!filePath) {
-                throw new Error('Workspace edit item is missing filePath.');
-            }
-            const rangePayload = item.range ?? {
-                startLine: item.startLine ?? item.start_line,
-                startColumn: item.startColumn ?? item.start_column,
-                endLine: item.endLine ?? item.end_line,
-                endColumn: item.endColumn ?? item.end_column,
-            };
-            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-            const range = this.toRange(rangePayload);
-            const expectedText = String(item.expectedText ?? item.expected_text ?? '');
-            if (expectedText) {
-                const actual = document.getText(range);
-                if (actual !== expectedText) {
-                    throw new Error(`Expected text mismatch before workspace edit. file=${document.uri.fsPath} range=${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1} expected=${JSON.stringify(expectedText.length > 200 ? `${expectedText.slice(0, 200)}...` : expectedText)} actual=${JSON.stringify(actual.length > 200 ? `${actual.slice(0, 200)}...` : actual)}`);
-                }
-            }
-            workspaceEdit.replace(document.uri, range, String(item.newText ?? item.new_text ?? ''));
-        }
-        const applied = await vscode.workspace.applyEdit(workspaceEdit);
-        if (!applied) {
-            throw new Error('VS Code rejected the workspace edit.');
-        }
-        if (vscode.workspace.getConfiguration('windowsCodeSearchBridge').get('saveAfterApplyEdit', true)) {
-            for (const item of edits) {
-                const filePath = String(item.filePath ?? item.file_path ?? '');
-                if (!filePath) {
-                    continue;
-                }
-                const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-                await document.save();
-            }
-        }
-        return {
-            applied: true,
-            editCount: edits.length,
-            label: String(payload.label ?? 'MCP workspace edit')
-        };
-    }
-    async openFile(payload) {
-        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(String(payload.filePath)));
-        const line = Math.max(1, Number(payload.line ?? 1));
-        const column = Math.max(1, Number(payload.column ?? 1));
-        const position = new vscode.Position(line - 1, column - 1);
-        await vscode.window.showTextDocument(document, {
-            preserveFocus: Boolean(payload.preserveFocus),
-            selection: new vscode.Range(position, position)
-        });
-        return {
-            filePath: document.uri.fsPath,
-            line,
-            column
-        };
-    }
-    toRange(input) {
-        const startLine = Math.max(1, Number(input?.startLine ?? 1));
-        const startColumn = Math.max(1, Number(input?.startColumn ?? 1));
-        const endLine = Math.max(1, Number(input?.endLine ?? startLine));
-        const endColumn = Math.max(1, Number(input?.endColumn ?? startColumn));
-        return new vscode.Range(startLine - 1, startColumn - 1, endLine - 1, endColumn - 1);
-    }
-    async reportCommandResult(commandId, payload) {
-        await this.bridgeClient.postJson(`/sessions/${encodeURIComponent(this.sessionId)}/commands/${encodeURIComponent(commandId)}/result`, payload);
     }
     autoPushDiagnosticsEnabled() {
         return vscode.workspace.getConfiguration('windowsCodeSearchBridge').get('autoPushDiagnostics', true);
@@ -780,6 +649,9 @@ class BridgeController {
     handleConfigurationChange(event) {
         if (event.affectsConfiguration('windowsCodeSearchBridge.pollIntervalMs')) {
             this.restartPolling();
+        }
+        if (event.affectsConfiguration('windowsCodeSearchBridge.heartbeatIntervalMs')) {
+            this.restartHeartbeat();
         }
         if (event.affectsConfiguration('windowsCodeSearchBridge.bridgeBaseUrl') ||
             event.affectsConfiguration('windowsCodeSearchBridge.bridgeHost') ||
@@ -827,4 +699,3 @@ class BridgeController {
 }
 exports.BridgeController = BridgeController;
 //# sourceMappingURL=bridgeController.js.map
-
