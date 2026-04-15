@@ -125,16 +125,32 @@ class SearchEngineBridge:
             raise RuntimeError(details)
 
         if not stdout_text.strip():
+            stderr_hint = stderr_text.strip()
             self._log_command_result(
-                logging.WARNING,
-                "Search engine returned empty stdout",
+                logging.ERROR,
+                "Search engine returned exit 0 but empty stdout (possible broken search)",
                 command_name,
                 payload,
                 returncode=completed.returncode,
                 stdout=completed.stdout,
                 stderr=completed.stderr,
             )
-            return {}
+            if stderr_hint:
+                raise RuntimeError(
+                    f"Search engine returned no output for {command_name}. "
+                    f"stderr: {self._clip_output(stderr_hint, 400)}"
+                )
+            return {
+                "results": [],
+                "_diagnostic": {
+                    "status": "empty_engine_output",
+                    "message": (
+                        f"Search engine exited successfully (code 0) but produced no stdout for {command_name}. "
+                        "Possible causes: missing index, Qdrant connectivity issue, or query parsing failure that exits cleanly."
+                    ),
+                    "stderr": stderr_hint or None,
+                },
+            }
 
         try:
             return self._parse_json_output(stdout_text)

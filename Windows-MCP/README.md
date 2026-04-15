@@ -1,4 +1,4 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/cursortouch-windows-mcp-badge.png)](https://mseep.ai/app/cursortouch-windows-mcp)
+﻿[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/cursortouch-windows-mcp-badge.png)](https://mseep.ai/app/cursortouch-windows-mcp)
 
 <div align="center">
   <h1>🪟 Windows-MCP</h1>
@@ -66,7 +66,7 @@ mcp-name: io.github.CursorTouch/Windows-MCP
   Typical latency between actions (e.g., from one mouse click to the next) ranges from **0.2 to 0.9 secs**, and may slightly vary based on the number of active applications and system load, also the inferencing speed of the llm.
 
 - **DOM Mode for Browser Automation**  
-  Special `use_dom=True` mode for State-Tool that focuses exclusively on web page content, filtering out browser UI elements for cleaner, more efficient web automation.
+  Special `use_dom=True` mode for Snapshot that focuses exclusively on web page content, filtering out browser UI elements for cleaner, more efficient web automation.
 
 ## 🛠️Installation
 
@@ -495,3 +495,4 @@ Made with ❤️ by [CursorTouch](https://github.com/CursorTouch)
   url={https://github.com/CursorTouch/Windows-MCP}
 }
 ```
+

@@ -80,11 +80,19 @@ class SearchEngineBridgeTests(unittest.TestCase):
         completed = SimpleNamespace(stdout=None, stderr="", returncode=0)
 
         with patch("server_runtime.subprocess.run", return_value=completed):
-            with self.assertLogs("server_runtime", level="WARNING") as logs:
+            with self.assertLogs("server_runtime", level="ERROR") as logs:
                 result = self.bridge.run_tool("hybrid_code_search", {"query": "needle"})
 
-        self.assertEqual(result, {})
+        self.assertEqual(result["results"], [])
+        self.assertIn("empty_engine_output", result["_diagnostic"]["status"])
         self.assertIn("empty stdout", "\n".join(logs.output))
+
+    def test_run_tool_raises_when_empty_stdout_with_stderr(self) -> None:
+        completed = SimpleNamespace(stdout="", stderr="Qdrant connection refused", returncode=0)
+
+        with patch("server_runtime.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(RuntimeError, "Qdrant connection refused"):
+                self.bridge.run_tool("hybrid_code_search", {"query": "needle"})
 
     def test_run_tool_prefers_stderr_on_nonzero_exit(self) -> None:
         completed = SimpleNamespace(stdout=None, stderr="engine exploded", returncode=1)

@@ -96,6 +96,8 @@ Search result normalization:
 - `semantic_code_search`, `lexical_code_search`, and `hybrid_code_search` add a normalized `filePath` and `snippet` when available
 - when the underlying engine provides location data, normalized hits expose it under `location` instead of synthesizing top-level edit-ready line ranges by default
 - lexical hits still preserve their original fields such as `file`, `line`, and `snippet` for backward compatibility
+- `hybrid_code_search` now applies a wrapper-level rerank to fused hits before returning them, favoring lexical corroboration, exact query phrase matches, identifier-aware feature-token overlap, and source files over generated artifacts such as `out/`, `dist/`, `.map`, and minified outputs; the original engine score remains a final tie-breaker
+- for exact identifier queries such as `create_vscode_session`, hybrid search now promotes the real source implementation into fused results even when the engine initially omits that lexical hit; lower-ranked test or doc matches can still appear below the primary implementation hit
 - treat search result locations as navigation hints; use `get_vscode_file_range` to obtain fresh numbered lines before editing
 
 The included starter extension lives in `vscode-bridge-extension` and polls the bridge for queued edit/open-file commands.
@@ -173,9 +175,15 @@ The integrated MCP exposes these search-side tools:
 - `add_auto_index_repository`
 - `remove_auto_index_repository`
 
-Search tools accept an optional `repo` argument so you can target one indexed codebase, and `index_repository` now performs incremental file-level updates.
+Search tools accept an optional `repo` argument so you can target one indexed codebase, and `index_repository` now performs incremental file-level updates. `hybrid_code_search` also performs a post-engine rerank in the MCP wrapper so lexical corroboration and stronger feature matches surface ahead of semantic-only drift, while generated outputs are demoted.
 
 Repo scoping accepts a repository root, repo name, or repo id when it resolves uniquely.
+
+Current hybrid-search caveat:
+
+- if indexed test files contain the exact query text, lexical hits from `tests/` can still outrank the product code
+- wrapper reranking reduces semantic helper drift, but it does not replace index-time exclusion rules for `tests/`, generated files, or other non-product content
+- for the cleanest results, prefer repo scoping and consider excluding `tests/`, `out/`, `dist/`, and similar paths at index time
 
 ## Auto indexing workflow
 
@@ -437,6 +445,14 @@ Until interactive runtimes become session-scoped, document the edit contract as:
 - re-read the file after each successful write before issuing another edit
 
 That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.
+
+
+
+
+
+
+
+
 
 
 

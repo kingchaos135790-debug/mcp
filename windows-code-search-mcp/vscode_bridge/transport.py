@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from threading import Thread
@@ -7,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 import json
 import logging
+
+from .models import SESSION_TTL_SECONDS, _parse_iso
 
 if TYPE_CHECKING:
     from .server import VSCodeBridgeServer
@@ -56,6 +59,34 @@ def build_bridge_handler(bridge: "VSCodeBridgeServer") -> type[BaseHTTPRequestHa
 
             if parsed.path == "/health":
                 self._send_json(HTTPStatus.OK, {"ok": True, "baseUrl": bridge.base_url})
+                return
+
+            if parsed.path == "/session-health":
+                with bridge.state._lock:
+                    bridge.state._prune_stale_sessions_locked()
+                    sessions = list(bridge.state._sessions.values())
+                health = []
+                for session in sessions:
+                    last_poll = _parse_iso(session.last_command_poll_at) if session.last_command_poll_at else None
+                    last_heartbeat = _parse_iso(session.last_heartbeat_at) if session.last_heartbeat_at else None
+                    last_seen = _parse_iso(session.last_seen_at) if session.last_seen_at else None
+                    now = datetime.now(UTC)
+                    poll_age = (now - last_poll).total_seconds() if last_poll else None
+                    heartbeat_age = (now - last_heartbeat).total_seconds() if last_heartbeat else None
+                    seen_age = (now - last_seen).total_seconds() if last_seen else None
+                    is_polling = poll_age is not None and poll_age < 30
+                    is_alive = seen_age is not None and seen_age < SESSION_TTL_SECONDS
+                    health.append({
+                        "sessionId": session.session_id,
+                        "isPolling": is_polling,
+                        "isAlive": is_alive,
+                        "pollAgeSeconds": round(poll_age, 1) if poll_age is not None else None,
+                        "heartbeatAgeSeconds": round(heartbeat_age, 1) if heartbeat_age is not None else None,
+                        "seenAgeSeconds": round(seen_age, 1) if seen_age is not None else None,
+                        "pendingCommandCount": sum(1 for c in session.pending_commands.values() if c.result is None),
+                        "workspaceRoot": session.workspace_root,
+                    })
+                self._send_json(HTTPStatus.OK, {"sessions": health})
                 return
 
             if parts == ["sessions"]:

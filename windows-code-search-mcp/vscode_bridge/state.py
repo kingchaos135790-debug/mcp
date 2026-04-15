@@ -226,6 +226,47 @@ class VSCodeBridgeState:
             )
             return dict(command.result)
 
+    def _find_active_polling_session(self, *, exclude_session_id: str = "") -> VSCodeSession | None:
+        """Find a session that has recently polled for commands (within the last 30 seconds)."""
+        now = datetime.now(UTC)
+        best: VSCodeSession | None = None
+        best_poll_time: datetime | None = None
+        for session_id, session in self._sessions.items():
+            if session_id == exclude_session_id:
+                continue
+            poll_at = _parse_iso(session.last_command_poll_at)
+            if poll_at is None:
+                continue
+            age = (now - poll_at).total_seconds()
+            if age > 30:
+                continue
+            if best_poll_time is None or poll_at > best_poll_time:
+                best = session
+                best_poll_time = poll_at
+        return best
+
+    def _try_recover_command_to_active_session(self, command: VSCodeCommand) -> VSCodeSession | None:
+        """Attempt to migrate a pending command to another session that is actively polling."""
+        if command.result is not None:
+            return None
+        active_session = self._find_active_polling_session(exclude_session_id=command.session_id)
+        if active_session is None:
+            return None
+        old_session = self._sessions.get(command.session_id)
+        if old_session is not None:
+            old_session.pending_commands.pop(command.command_id, None)
+        command.session_id = active_session.session_id
+        command.status = "queued"
+        command.delivered_at = ""
+        active_session.pending_commands[command.command_id] = command
+        logger.info(
+            "Recovered VS Code bridge command %s by migrating to active session %s (was %s)",
+            command.command_id,
+            active_session.session_id,
+            old_session.session_id if old_session else "(gone)",
+        )
+        return active_session
+
     def _build_wait_for_command_timeout_message(
         self,
         command: VSCodeCommand,
@@ -285,13 +326,22 @@ class VSCodeBridgeState:
                     and session.last_command_poll_at >= command.created_at
                 )
                 if not poll_after_enqueue:
-                    message = self._build_wait_for_command_timeout_message(
-                        command,
-                        session,
-                        poll_observation_window_seconds=poll_observation_window_seconds,
-                    )
-                    logger.warning(message)
-                    raise TimeoutError(message)
+                    # Attempt automatic session recovery before failing
+                    recovered_session = self._try_recover_command_to_active_session(command)
+                    if recovered_session is not None:
+                        logger.info(
+                            "Session recovery: command %s migrated to session %s, retrying wait",
+                            command.command_id,
+                            recovered_session.session_id,
+                        )
+                    else:
+                        message = self._build_wait_for_command_timeout_message(
+                            command,
+                            session,
+                            poll_observation_window_seconds=poll_observation_window_seconds,
+                        )
+                        logger.warning(message)
+                        raise TimeoutError(message)
 
         remaining_timeout_seconds = max(0.0, timeout_seconds - poll_observation_window_seconds)
         if remaining_timeout_seconds > 0:

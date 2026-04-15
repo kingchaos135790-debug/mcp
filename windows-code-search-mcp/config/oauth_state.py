@@ -38,6 +38,7 @@ class _PersistentOAuthStateMixin:
         self._access_token_session_map: dict[str, str] = {}
         self._refresh_token_session_map: dict[str, str] = {}
         self._auth_code_session_map: dict[str, str] = {}
+        self._auth_code_resource_map: dict[str, str] = {}
         self._load_state()
         current_boot_id = get_current_boot_id()
         if current_boot_id and current_boot_id != self._last_boot_id:
@@ -58,23 +59,39 @@ class _PersistentOAuthStateMixin:
             for key, value in values.items()
         }
 
-    def _drop_token_pair(self, access_token: str) -> bool:
+    def _drop_token_pair(self, access_token: str, *, reason: str = "pruned") -> bool:
         access_token_value = str(access_token or "").strip()
         if not access_token_value:
             return False
+        had_session = self._access_token_session_map.pop(access_token_value, None)
         removed = self.access_tokens.pop(access_token_value, None) is not None
-        self._access_token_session_map.pop(access_token_value, None)
         linked_refresh = self._access_to_refresh_map.pop(access_token_value, "")
         if linked_refresh:
             self.refresh_tokens.pop(linked_refresh, None)
             self._refresh_token_session_map.pop(linked_refresh, None)
             self._refresh_to_access_map.pop(linked_refresh, None)
             removed = True
+        if removed:
+            LOGGER.info(
+                "OAuth binding dropped: access_token=...%s session=%s refresh=%s reason=%s",
+                access_token_value[-8:] if len(access_token_value) >= 8 else access_token_value,
+                had_session or "(none)",
+                bool(linked_refresh),
+                reason,
+            )
         return removed
 
     def _enforce_max_token_count(self) -> None:
         if self._max_persisted_tokens <= 0:
             return
+        overflow = len(self.access_tokens) - self._max_persisted_tokens
+        if overflow > 0:
+            LOGGER.info(
+                "OAuth token pruning: %d access tokens exceed cap of %d, pruning %d (prefer unbound tokens)",
+                len(self.access_tokens),
+                self._max_persisted_tokens,
+                overflow,
+            )
         while len(self.access_tokens) > self._max_persisted_tokens:
             access_tokens = list(self.access_tokens)
             if not access_tokens:
@@ -89,7 +106,7 @@ class _PersistentOAuthStateMixin:
             )
             if not candidate_access_token:
                 break
-            if not self._drop_token_pair(candidate_access_token):
+            if not self._drop_token_pair(candidate_access_token, reason="max_token_count"):
                 break
         self._prune_session_maps()
 
@@ -110,6 +127,7 @@ class _PersistentOAuthStateMixin:
             "access_token_session_map": dict(self._access_token_session_map),
             "refresh_token_session_map": dict(self._refresh_token_session_map),
             "auth_code_session_map": dict(self._auth_code_session_map),
+            "auth_code_resource_map": dict(self._auth_code_resource_map),
         }
         temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         temp_path.replace(self._storage_path)
@@ -153,10 +171,53 @@ class _PersistentOAuthStateMixin:
             }
             self._run_count = int(payload.get("run_count", 0) or 0)
             self._last_boot_id = str(payload.get("last_boot_id", "") or "").strip()
+            self._auth_code_resource_map = {
+                str(k): str(v)
+                for k, v in payload.get("auth_code_resource_map", {}).items()
+                if v
+            }
         except Exception as exc:
             LOGGER.warning("Failed to load OAuth state from %s: %s", self._storage_path, exc)
 
     def _prune_session_maps(self) -> None:
+        pruned_access = {
+            token: session_id
+            for token, session_id in self._access_token_session_map.items()
+            if token not in self.access_tokens or not session_id
+        }
+        pruned_refresh = {
+            token: session_id
+            for token, session_id in self._refresh_token_session_map.items()
+            if token not in self.refresh_tokens or not session_id
+        }
+        pruned_auth_codes = {
+            code: session_id
+            for code, session_id in self._auth_code_session_map.items()
+            if code not in self.auth_codes or not session_id
+        }
+        pruned_resources = {
+            code: resource
+            for code, resource in self._auth_code_resource_map.items()
+            if code not in self.auth_codes or not resource
+        }
+        for token, session_id in pruned_access.items():
+            LOGGER.info(
+                "OAuth binding pruned: access_token=...%s session=%s reason=token_evicted_or_session_empty",
+                token[-8:] if len(token) >= 8 else token,
+                session_id or "(none)",
+            )
+        for token, session_id in pruned_refresh.items():
+            LOGGER.info(
+                "OAuth binding pruned: refresh_token=...%s session=%s reason=token_evicted_or_session_empty",
+                token[-8:] if len(token) >= 8 else token,
+                session_id or "(none)",
+            )
+        for code, resource in pruned_resources.items():
+            LOGGER.debug(
+                "OAuth resource binding pruned: auth_code=...%s resource=%s reason=code_consumed_or_missing",
+                code[-8:] if len(code) >= 8 else code,
+                resource,
+            )
         self._access_token_session_map = {
             token: session_id
             for token, session_id in self._access_token_session_map.items()
@@ -171,6 +232,11 @@ class _PersistentOAuthStateMixin:
             code: session_id
             for code, session_id in self._auth_code_session_map.items()
             if code in self.auth_codes and session_id
+        }
+        self._auth_code_resource_map = {
+            code: resource
+            for code, resource in self._auth_code_resource_map.items()
+            if code in self.auth_codes and resource
         }
 
     def _record_token_session_ownership(
@@ -189,8 +255,15 @@ class _PersistentOAuthStateMixin:
         changed = False
 
         if access_token_value:
-            if self._access_token_session_map.get(access_token_value) != normalized_session_id:
+            old_session = self._access_token_session_map.get(access_token_value)
+            if old_session != normalized_session_id:
                 self._access_token_session_map[access_token_value] = normalized_session_id
+                LOGGER.info(
+                    "OAuth binding created: access_token=...%s -> session=%s (was=%s)",
+                    access_token_value[-8:] if len(access_token_value) >= 8 else access_token_value,
+                    normalized_session_id,
+                    old_session or "(none)",
+                )
                 changed = True
             linked_refresh = self._access_to_refresh_map.get(access_token_value)
             if linked_refresh and self._refresh_token_session_map.get(linked_refresh) != normalized_session_id:
@@ -198,8 +271,15 @@ class _PersistentOAuthStateMixin:
                 changed = True
 
         if refresh_token_value:
-            if self._refresh_token_session_map.get(refresh_token_value) != normalized_session_id:
+            old_session = self._refresh_token_session_map.get(refresh_token_value)
+            if old_session != normalized_session_id:
                 self._refresh_token_session_map[refresh_token_value] = normalized_session_id
+                LOGGER.info(
+                    "OAuth binding created: refresh_token=...%s -> session=%s (was=%s)",
+                    refresh_token_value[-8:] if len(refresh_token_value) >= 8 else refresh_token_value,
+                    normalized_session_id,
+                    old_session or "(none)",
+                )
                 changed = True
             linked_access = self._refresh_to_access_map.get(refresh_token_value)
             if linked_access and self._access_token_session_map.get(linked_access) != normalized_session_id:
@@ -241,6 +321,11 @@ class _PersistentOAuthStateMixin:
         rebound_session_id = normalize_chat_session_id(self._refresh_token_session_map.get(refresh_token, ""))
         if rebound_session_id:
             self._access_token_session_map[access_token_value] = rebound_session_id
+            LOGGER.info(
+                "OAuth binding recovered: access_token=...%s -> session=%s (from refresh_token)",
+                access_token_value[-8:] if len(access_token_value) >= 8 else access_token_value,
+                rebound_session_id,
+            )
             self._persist_state()
         return rebound_session_id
 
@@ -250,12 +335,20 @@ class _PersistentOAuthStateMixin:
 
     async def authorize(self, client: OAuthClientInformationFull, params):
         existing_codes = set(self.auth_codes)
+        resource = str(getattr(params, "resource", None) or "").strip()
         redirect_uri = await super().authorize(client, params)
         session_id = get_current_chat_session_id()
-        if session_id:
-            for authorization_code in self.auth_codes:
-                if authorization_code not in existing_codes:
+        for authorization_code in self.auth_codes:
+            if authorization_code not in existing_codes:
+                LOGGER.info(
+                    "OAuth authorize: new auth_code issued, resource=%s session=%s",
+                    resource or "(none)",
+                    session_id or "(none)",
+                )
+                if session_id:
                     self._record_auth_code_session_ownership(authorization_code, session_id)
+                if resource:
+                    self._auth_code_resource_map[authorization_code] = resource
         self._persist_state()
         return redirect_uri
 
@@ -268,14 +361,29 @@ class _PersistentOAuthStateMixin:
         return result
 
     async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code):
+        code_str = getattr(authorization_code, "code", None) or str(authorization_code or "")
+        code_str = str(code_str).strip()
+        resource = self._auth_code_resource_map.pop(code_str, "")
         token = await super().exchange_authorization_code(client, authorization_code)
-        authorization_code_value = str(authorization_code or "").strip()
+        access_token_str = str(getattr(token, "access_token", "") or "")
+        if resource and access_token_str:
+            self._stamp_resource_on_access_token(access_token_str, resource)
+            LOGGER.info(
+                "OAuth resource stamped on code exchange: access_token=...%s resource=%s",
+                access_token_str[-8:] if len(access_token_str) >= 8 else access_token_str,
+                resource,
+            )
         session_id = (
             get_current_chat_session_id()
-            or normalize_chat_session_id(self._auth_code_session_map.pop(authorization_code_value, ""))
+            or normalize_chat_session_id(self._auth_code_session_map.pop(code_str, ""))
+        )
+        LOGGER.info(
+            "OAuth code exchange: access_token=...%s session=%s",
+            access_token_str[-8:] if len(access_token_str) >= 8 else access_token_str,
+            session_id or "(none)",
         )
         self._record_token_session_ownership(
-            access_token=getattr(token, "access_token", ""),
+            access_token=access_token_str,
             refresh_token=getattr(token, "refresh_token", ""),
             session_id=session_id,
         )
@@ -290,18 +398,50 @@ class _PersistentOAuthStateMixin:
         return result
 
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token, scopes: list[str]):
+        refresh_token_str = getattr(refresh_token, "token", None) or str(refresh_token or "")
+        refresh_token_str = str(refresh_token_str).strip()
+        linked_access = self._refresh_to_access_map.get(refresh_token_str, "")
+        resource = ""
+        if linked_access:
+            old_token_obj = self.access_tokens.get(linked_access)
+            resource = str(getattr(old_token_obj, "resource", None) or "").strip()
         token = await super().exchange_refresh_token(client, refresh_token, scopes)
+        access_token_str = str(getattr(token, "access_token", "") or "")
+        if resource and access_token_str:
+            self._stamp_resource_on_access_token(access_token_str, resource)
+            LOGGER.info(
+                "OAuth resource propagated on refresh: access_token=...%s resource=%s",
+                access_token_str[-8:] if len(access_token_str) >= 8 else access_token_str,
+                resource,
+            )
         session_id = (
             get_current_chat_session_id()
-            or normalize_chat_session_id(self._refresh_token_session_map.get(str(refresh_token), ""))
+            or normalize_chat_session_id(self._refresh_token_session_map.get(refresh_token_str, ""))
+        )
+        LOGGER.info(
+            "OAuth refresh exchange: access_token=...%s session=%s",
+            access_token_str[-8:] if len(access_token_str) >= 8 else access_token_str,
+            session_id or "(none)",
         )
         self._record_token_session_ownership(
-            access_token=getattr(token, "access_token", ""),
-            refresh_token=getattr(token, "refresh_token", "") or str(refresh_token),
+            access_token=access_token_str,
+            refresh_token=getattr(token, "refresh_token", "") or refresh_token_str,
             session_id=session_id,
         )
         self._persist_state()
         return token
+
+    def _stamp_resource_on_access_token(self, access_token_str: str, resource: str) -> None:
+        token_obj = self.access_tokens.get(access_token_str)
+        if token_obj is None or not resource:
+            return
+        try:
+            token_obj.resource = resource  # type: ignore[assignment]
+        except Exception:
+            try:
+                self.access_tokens[access_token_str] = token_obj.model_copy(update={"resource": resource})
+            except Exception:
+                LOGGER.warning("Could not stamp resource on access token %s", access_token_str[-8:])
 
     async def load_access_token(self, token: str):  # type: ignore[override]
         had_token = token in self.access_tokens
@@ -323,12 +463,18 @@ class _PersistentOAuthStateMixin:
         if session_id:
             set_current_chat_session_id(session_id)
         if had_token and token not in self.access_tokens:
+            LOGGER.info(
+                "OAuth binding loss: access_token=...%s evicted during load_access_token",
+                token[-8:] if len(token) >= 8 else token,
+            )
             self._prune_session_maps()
             self._persist_state()
         return result
 
     async def revoke_token(self, token) -> None:
         token_value = str(token)
+        had_access_session = self._access_token_session_map.get(token_value)
+        had_refresh_session = self._refresh_token_session_map.get(token_value)
         await super().revoke_token(token)
         self._access_token_session_map.pop(token_value, None)
         self._refresh_token_session_map.pop(token_value, None)
@@ -338,6 +484,12 @@ class _PersistentOAuthStateMixin:
         linked_access = self._refresh_to_access_map.get(token_value)
         if linked_access:
             self._access_token_session_map.pop(linked_access, None)
+        LOGGER.info(
+            "OAuth token revoked: token=...%s access_session=%s refresh_session=%s",
+            token_value[-8:] if len(token_value) >= 8 else token_value,
+            had_access_session or "(none)",
+            had_refresh_session or "(none)",
+        )
         self._prune_session_maps()
         self._persist_state()
 

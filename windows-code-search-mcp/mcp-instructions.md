@@ -13,6 +13,7 @@ Use these behaviors by default:
 - After any successful edit, re-read the file before issuing another edit because line positions may have shifted.
 - If `expected_text` does not match, stop and re-locate the target instead of guessing.
 - Treat code search locations as hints for navigation and inspection, not as edit targets.
+- For exact identifier lookups such as `create_vscode_session`, `hybrid_code_search` can now promote the real source definition into fused results even when that lexical hit was not initially surfaced by the engine; test and documentation matches can still appear lower in the list.
 - Do not assume search hits carry stable edit-ready line numbers by default.
 - After MCP server restarts, prefer canonical `/Windows MCP/...` tool paths for follow-up calls because cached linked tool paths can briefly return `Resource not found`.
 - If an edit fails because `expected_text` does not match or the target drifted, re-read the exact range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored change.
@@ -50,4 +51,5 @@ Question-answering workflow:
 1. Find the likely file or symbol with search when needed.
 2. Retrieve context with `get_vscode_context` only when the answer depends on full context content.
 3. Use `get_vscode_file_range` when numbered line references are needed.
+
 

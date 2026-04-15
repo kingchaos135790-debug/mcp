@@ -32,6 +32,70 @@
         }
       },
       "last_error": ""
+    },
+    {
+      "repo_root": "E:\\Program Files\\mcp",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-15T04:46:34.645905Z",
+      "last_index_reason": "watch",
+      "last_result": {
+        "repoId": "mcp-07c23e33c840",
+        "repoName": "mcp",
+        "repoRoot": "E:\\Program Files\\mcp",
+        "indexedFiles": 156,
+        "changedFiles": 0,
+        "unchangedFiles": 156,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\mcp-07c23e33c840\\local-lexical-index.json",
+          "documents": 156
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    },
+    {
+      "repo_root": "E:\\Program Files\\mcp\\windows-code-search-mcp",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-15T04:44:31.537285Z",
+      "last_index_reason": "watch",
+      "last_result": {
+        "repoId": "windows-code-search-mcp-80fbfdd19718",
+        "repoName": "windows-code-search-mcp",
+        "repoRoot": "E:\\Program Files\\mcp\\windows-code-search-mcp",
+        "indexedFiles": 62,
+        "changedFiles": 0,
+        "unchangedFiles": 62,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\windows-code-search-mcp-80fbfdd19718\\local-lexical-index.json",
+          "documents": 62
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
     }
   ]
 }
