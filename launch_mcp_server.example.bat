@@ -12,10 +12,6 @@ set "MCP_LAUNCHER_NAME=%~n0"
 
 if "%MCP_ROOT:~-1%"=="\" set "MCP_ROOT=%MCP_ROOT:~0,-1%"
 
-set "MCP_LOCAL_ENV=%MCP_ROOT%\launch_mcp_server.local.bat"
-if exist "%MCP_LOCAL_ENV%" (
-  call "%MCP_LOCAL_ENV%"
-)
 
 rem ===== Paths — adjust for your machine =====
 set "MCP_DIR=%MCP_ROOT%\windows-code-search-mcp"
@@ -123,22 +119,16 @@ if not exist "%QDRANT_START_BAT%" (
 
 rem ===== OAuth server-side config =====
 rem Set OAUTH_ENABLED=true and fill in the values below to enable OAuth.
-rem Put OAUTH_CLIENT_SECRET in launch_mcp_server.local.bat (gitignored).
 set "OAUTH_ENABLED=true"
 set "OAUTH_BASE_URL=https://your-domain.example.com"
 set "OAUTH_REDIRECT_URIS=https://chatgpt.com/connector/oauth/YOUR_CONNECTOR_ID"
 set "OAUTH_CLIENT_ID=windows"
-rem OAUTH_CLIENT_SECRET is loaded from launch_mcp_server.local.bat
+set "OAUTH_CLIENT_SECRET=your-secret-here"
 set "OAUTH_TOKEN_ENDPOINT_AUTH_METHOD=client_secret_post"
 set "OAUTH_REQUIRED_SCOPES=mcp:access"
 set "OAUTH_VALID_SCOPES=mcp:access,offline_access"
 set "OAUTH_ALLOW_DYNAMIC_CLIENT_REGISTRATION=false"
 if "%OAUTH_STATE_MAX_TOKENS%"=="" set "OAUTH_STATE_MAX_TOKENS=50"
-if "%OAUTH_CLIENT_SECRET%"=="" (
-  call :log "ERROR: OAUTH_CLIENT_SECRET is not set. Put it in launch_mcp_server.local.bat"
-  pause
-  exit /b 1
-)
 
 set "WINDOWS_MCP_DIR=%WINDOWS_MCP_DIR%"
 set "SEARCH_ENGINE_DIR=%SEARCH_ENGINE_DIR%"

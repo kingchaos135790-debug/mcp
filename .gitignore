@@ -2,7 +2,6 @@ logs/
 windows-code-search-mcp/__pycache__/
 windows-code-search-mcp/oauth-state.json
 windows-code-search-mcp/managed-repositories.json
-launch_mcp_server.local.bat
 launch_mcp_server.bat
 cloudflare.bat
 cloudflare.exe
