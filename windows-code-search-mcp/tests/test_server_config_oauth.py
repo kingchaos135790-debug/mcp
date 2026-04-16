@@ -227,7 +227,7 @@ class ResourceStampingTests(unittest.TestCase):
         return next(iter(self.provider.auth_codes))
 
     def test_resource_stamped_on_access_token_after_code_exchange(self) -> None:
-        resource = "https://mcp.laughman233.shop/mcp"
+        resource = "https://mcp.example.com/mcp"
         auth_code = self._authorize_with_resource(resource)
 
         self.assertIn(auth_code, self.provider._auth_code_resource_map)
@@ -241,7 +241,7 @@ class ResourceStampingTests(unittest.TestCase):
         self.assertNotIn(auth_code, self.provider._auth_code_resource_map)
 
     def test_resource_propagated_through_refresh_token_exchange(self) -> None:
-        resource = "https://mcp.laughman233.shop/mcp"
+        resource = "https://mcp.example.com/mcp"
         auth_code = self._authorize_with_resource(resource)
         token = asyncio.run(self.provider.exchange_authorization_code(self.client, auth_code))
 
@@ -276,7 +276,7 @@ class ResourceStampingTests(unittest.TestCase):
         self.assertIsNone(access_token_obj.resource)
 
     def test_resource_map_pruned_after_auth_code_expires(self) -> None:
-        resource = "https://mcp.laughman233.shop/mcp"
+        resource = "https://mcp.example.com/mcp"
         auth_code = self._authorize_with_resource(resource)
 
         self.provider.auth_codes.clear()
@@ -285,7 +285,7 @@ class ResourceStampingTests(unittest.TestCase):
         self.assertNotIn(auth_code, self.provider._auth_code_resource_map)
 
     def test_resource_map_persisted_and_reloaded(self) -> None:
-        resource = "https://mcp.laughman233.shop/mcp"
+        resource = "https://mcp.example.com/mcp"
         auth_code = self._authorize_with_resource(resource)
 
         provider2 = server_config.PersistentInMemoryOAuthProvider(storage_path=self.storage_path)

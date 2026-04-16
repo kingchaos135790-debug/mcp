@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "repositories": [
+    {
+      "repo_root": "C:\\path\\to\\your\\project",
+      "watch": true,
+      "auto_index_on_start": true
+    }
+  ]
+}
