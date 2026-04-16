@@ -1,0 +1,5 @@
+# Force Windows batch files to always use CRLF line endings.
+# cmd.exe requires CRLF to resolve batch labels (call :label).
+# LF-only endings cause "The system cannot find the batch label specified" errors.
+*.bat  text  eol=crlf
+*.cmd  text  eol=crlf
