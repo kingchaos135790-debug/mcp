@@ -1,3 +1,4 @@
 logs/
 windows-code-search-mcp/__pycache__/
 windows-code-search-mcp/oauth-state.json
+launch_mcp_server.local.bat

@@ -26,10 +26,15 @@ VSCODE_TOOL_NAMES = [
     "get_vscode_context_summary",
     "get_vscode_file_range",
     "get_vscode_diagnostics",
+    "get_file_range",
+    "get_multiple_file_ranges",
     "request_vscode_edit",
     "request_vscode_workspace_edit",
     "safe_vscode_edit",
     "anchored_vscode_edit",
+    "request_file_edit",
+    "safe_file_edit",
+    "anchored_file_edit",
     "open_vscode_file",
 ]
 

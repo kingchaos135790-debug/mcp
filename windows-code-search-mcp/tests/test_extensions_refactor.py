@@ -1,8 +1,10 @@
 import asyncio
 import json
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -39,6 +41,7 @@ sys.modules["windows_mcp.tools"] = windows_mcp_tools
 
 server_config = types.ModuleType("server_config")
 server_config.path_is_within = lambda candidate, root: True
+server_config.parse_bool = lambda value, default=False: default if value is None else str(value).strip().lower() in {"1", "true", "yes", "on"}
 sys.modules["server_config"] = server_config
 
 server_runtime = types.ModuleType("server_runtime")
@@ -237,11 +240,19 @@ class ExtensionBoundaryTests(unittest.TestCase):
                 "request_vscode_workspace_edit",
                 "safe_vscode_edit",
                 "anchored_vscode_edit",
+                "get_file_range",
+                "get_multiple_file_ranges",
+                "request_file_edit",
+                "safe_file_edit",
+                "anchored_file_edit",
                 "open_vscode_file",
             },
         )
         self.assertTrue(mcp.tools["get_vscode_file_range"]["metadata"]["annotations"].readOnlyHint)
+        self.assertTrue(mcp.tools["get_file_range"]["metadata"]["annotations"].readOnlyHint)
+        self.assertTrue(mcp.tools["get_multiple_file_ranges"]["metadata"]["annotations"].readOnlyHint)
         self.assertFalse(mcp.tools["safe_vscode_edit"]["metadata"]["annotations"].readOnlyHint)
+        self.assertFalse(mcp.tools["anchored_file_edit"]["metadata"]["annotations"].readOnlyHint)
 
 
 class VSCodeEditExtensionTests(unittest.TestCase):
@@ -418,6 +429,110 @@ class VSCodeEditExtensionTests(unittest.TestCase):
                             )
 
         self.assertEqual(bridge.edit_calls, [])
+
+    def test_get_file_range_reads_numbered_lines_without_vscode(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        VSCodeEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
+            result = mcp.tools["get_file_range"]["func"](
+                file_path=str(target),
+                start_line=2,
+                end_line=2,
+                context_before=1,
+            )
+            payload = json.loads(result)
+            self.assertTrue(payload["directFileRead"])
+            self.assertEqual(payload["startLine"], 1)
+            self.assertEqual(payload["endLine"], 2)
+            self.assertEqual(payload["content"], "alpha\nbeta")
+            self.assertEqual(payload["lines"][1]["text"], "beta")
+            self.assertIn("anchored_file_edit", payload["anchorEditHint"])
+
+    def test_get_multiple_file_ranges_reads_multiple_files_without_vscode(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        VSCodeEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir) / "app.py"
+            second = Path(tmpdir) / "lib.py"
+            first.write_text("alpha\nbeta\n", encoding="utf-8", newline="\n")
+            second.write_text("one\ntwo\nthree\n", encoding="utf-8", newline="\n")
+            files_json = json.dumps(
+                [
+                    {"filePath": str(first), "startLine": 1, "endLine": 2},
+                    {"filePath": str(second), "startLine": 2, "endLine": 3, "contextBefore": 1},
+                ]
+            )
+            result = mcp.tools["get_multiple_file_ranges"]["func"](files_json=files_json)
+            payload = json.loads(result)
+            self.assertTrue(payload["directFileRead"])
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(payload["files"][0]["content"], "alpha\nbeta")
+            self.assertEqual(payload["files"][1]["content"], "one\ntwo\nthree")
+            self.assertEqual(payload["files"][1]["startLine"], 1)
+            self.assertEqual(payload["files"][1]["endLine"], 3)
+
+    def test_request_file_edit_applies_validated_direct_disk_edit(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        VSCodeEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
+            result = mcp.tools["request_file_edit"]["func"](
+                file_path=str(target),
+                start_line=2,
+                start_column=1,
+                end_line=2,
+                end_column=5,
+                new_text="delta",
+                expected_text="beta",
+            )
+            payload = json.loads(result)
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(target.read_text(encoding="utf-8"), "alpha\ndelta\ngamma\n")
+
+    def test_safe_file_edit_applies_single_unique_match(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        VSCodeEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
+            result = mcp.tools["safe_file_edit"]["func"](
+                file_path=str(target),
+                search_text="beta",
+                replacement_text="delta",
+            )
+            payload = json.loads(result)
+            self.assertTrue(payload["safeEdit"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "alpha\ndelta\ngamma\n")
+
+    def test_anchored_file_edit_replaces_body_without_vscode(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        VSCodeEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("before\n<start>\nlive\n<end>\nafter\n", encoding="utf-8", newline="\n")
+            result = mcp.tools["anchored_file_edit"]["func"](
+                file_path=str(target),
+                start_anchor="<start>\n",
+                end_anchor="\n<end>",
+                replacement_text="updated",
+                expected_body="live",
+            )
+            payload = json.loads(result)
+            self.assertTrue(payload["anchorBasedEdit"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "before\n<start>\nupdated\n<end>\nafter\n")
 
 
 if __name__ == "__main__":

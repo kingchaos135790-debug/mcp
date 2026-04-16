@@ -50,7 +50,7 @@ Bridge defaults:
 - `VSCODE_BRIDGE_TOKEN=` optional shared secret sent as `X-Bridge-Token`
 - `MCP_INSTRUCTIONS_PATH=` optional path to a markdown file used as server instructions; defaults to `mcp-instructions.md`
 
-MCP tools exposed for the bridge:
+MCP tools exposed for VS Code sessions and edits:
 
 - `create_vscode_session`
 - `close_vscode_session`
@@ -60,26 +60,37 @@ MCP tools exposed for the bridge:
 - `get_vscode_context_summary`
 - `get_vscode_file_range`
 - `get_vscode_diagnostics`
+- `get_file_range`
+- `get_multiple_file_ranges`
 - `request_vscode_edit`
 - `request_vscode_workspace_edit`
 - `safe_vscode_edit`
 - `anchored_vscode_edit`
+- `request_file_edit`
+- `safe_file_edit`
+- `anchored_file_edit`
 - `open_vscode_file`
+
 
 Operational notes:
 
 - After MCP server restarts, prefer the canonical `/Windows MCP/...` tool paths for follow-up calls. Cached linked tool paths can briefly return `Resource not found` until the tool list refreshes.
 - For read-only VS Code bridge checks, use `list_vscode_sessions`, `get_vscode_diagnostics`, and `get_vscode_file_range` in that order when applicable.
+- For direct-on-disk read-before-edit flows without VS Code, use `get_file_range` for one file or `get_multiple_file_ranges` for several files before `request_file_edit`, `safe_file_edit`, or `anchored_file_edit`.
 - If an edit fails because `expected_text` no longer matches or the bridge reports target drift, re-read the exact range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored change.
 - `request_vscode_edit` now normalizes line endings before dispatch and retries once with live `expected_text` refreshed from disk when drift is detected.
 - `request_vscode_workspace_edit` now normalizes text payloads before dispatch and retries once with live ranged `expectedText` refreshed where possible when drift is detected.
+- `get_file_range` and `get_multiple_file_ranges` read files directly on disk with numbered lines and path metadata, which is useful when preparing direct-on-disk exact or anchored edits without requiring a VS Code session.
+- `request_file_edit`, `safe_file_edit`, and `anchored_file_edit` edit files directly on disk without requiring a VS Code session. Prefer them when no bridge session is available, when the target file is outside the active VS Code workspace, or when the task does not benefit from editor context.
 - For multi-chat editing, keep one VS Code bridge `session_id` per chat or task when possible. Do not reuse the same session context for unrelated chats.
 - Treat search hits, old line numbers, and earlier file reads as navigation hints only. Re-read the exact numbered lines with `get_vscode_file_range` immediately before each write.
-- Prefer `request_vscode_edit` for one small local change, `safe_vscode_edit` for one exact anchored replacement, `anchored_vscode_edit` for replacing the body between stable start/end anchors, and `request_vscode_workspace_edit` for one logical change that spans multiple ranges gathered from the same fresh snapshot.
+- Prefer `request_vscode_edit` for one small local change inside an active workspace, `safe_vscode_edit` for one exact anchored replacement, `anchored_vscode_edit` for replacing the body between stable start/end anchors, and `request_vscode_workspace_edit` for one logical change that spans multiple ranges gathered from the same fresh snapshot.
+- Prefer `request_file_edit` for one exact direct-on-disk range edit, `safe_file_edit` for one exact direct-on-disk text replacement, and `anchored_file_edit` for replacing the body between stable start/end anchors directly on disk.
 - Include `expected_text` or `expectedText` by default so drift is detected instead of silently overwriting another chat's change.
 - After any successful edit, re-read the affected range before issuing the next write from the same chat.
 - Edit mismatch errors from both `request_vscode_edit` and `request_vscode_workspace_edit` now include the file path, requested range, and truncated `expected` and `actual` text previews to make drift recovery deterministic.
 - If you patch the VS Code bridge extension on disk, reload the VS Code window or restart the extension host so the running bridge picks up the updated `src/out` code.
+
 
 What this enables:
 
@@ -90,7 +101,10 @@ What this enables:
 - MCP clients can inspect current IDE diagnostics from VS Code Problems data
 - MCP clients can ask VS Code to apply exact line-and-column edits through the editor API instead of writing files blindly on disk; callers should include fresh `expected_text` and re-read before follow-up edits
 - MCP clients can batch multiple related edits through one workspace edit request, which is the preferred path for multi-file or multi-chat change sets
+- MCP clients can read files directly on disk without a VS Code session by using `get_file_range` for one file or `get_multiple_file_ranges` for several files when preparing exact or anchored edits
+- MCP clients can edit files directly on disk without a VS Code session by using `request_file_edit`, `safe_file_edit`, or `anchored_file_edit` when editor context is unavailable or unnecessary
 - when an edit target drifts, the bridge returns enough mismatch detail to show what text was expected, what text is actually present, and where the comparison occurred
+
 
 Search result normalization:
 - `semantic_code_search`, `lexical_code_search`, and `hybrid_code_search` add a normalized `filePath` and `snippet` when available
@@ -114,25 +128,34 @@ Current VS Code bridge UX:
 
 1. Call `create_vscode_session` when you want to reserve a fresh chat-local session, or use `list_vscode_sessions` to choose an existing session that already belongs to the current chat.
 2. Call `get_vscode_session` or `get_vscode_context_summary` to confirm the workspace, files, and context tied to that session.
-3. Read the exact numbered lines you plan to change with `get_vscode_file_range` immediately before editing.
-4. For one contiguous patch, call `request_vscode_edit` with fresh `expected_text`.
-5. For several related patches, send one `request_vscode_workspace_edit` payload and include `expectedText` for each changed range when available.
-6. For one anchored exact-text replacement inside a narrow window, prefer `safe_vscode_edit`.
-7. If another chat changes the file and causes drift, re-read only the failed range, refresh the expected text, and retry the narrowest safe edit.
-8. Avoid mixing desktop automation and VS Code edits from different chats when they target the same visible VS Code window.
-9. Close finished or stale sessions with `close_vscode_session` so later chats do not accidentally reuse them.
+3. Read the exact numbered lines you plan to change with `get_vscode_file_range` immediately before editing when you are working inside an active VS Code workspace.
+4. For one contiguous patch inside that workspace, call `request_vscode_edit` with fresh `expected_text`.
+5. For several related patches inside that workspace, send one `request_vscode_workspace_edit` payload and include `expectedText` for each changed range when available.
+6. For one anchored exact-text replacement inside that workspace, prefer `safe_vscode_edit`, or use `anchored_vscode_edit` when a block is best targeted by stable start/end anchors.
+7. When no VS Code session is available, when the file is outside the active workspace, or when editor context is unnecessary, use `get_file_range` for one file or `get_multiple_file_ranges` for several files to read the freshest numbered lines before a direct-on-disk edit.
+8. Then use `request_file_edit`, `safe_file_edit`, or `anchored_file_edit` to apply the smallest validated direct-on-disk change.
+9. If another chat changes the file and causes drift, re-read only the failed range, refresh the expected text, and retry the narrowest safe edit.
+10. Avoid mixing desktop automation and VS Code edits from different chats when they target the same visible VS Code window.
+11. Close finished or stale sessions with `close_vscode_session` so later chats do not accidentally reuse them.
+
 
 Recommended tool selection:
 
 | Goal | Preferred tool | Why |
 | --- | --- | --- |
 | Create or reserve one chat-local session | `create_vscode_session` | makes session ownership explicit before context or edits arrive |
-| Read exact target lines before editing | `get_vscode_file_range` | refreshes the current numbered range from the live workspace |
-| Replace one contiguous range | `request_vscode_edit` | applies the smallest validated patch with `expected_text` |
+| Read exact target lines before editing in an active workspace | `get_vscode_file_range` | refreshes the current numbered range from the live workspace |
+| Replace one contiguous range in an active workspace | `request_vscode_edit` | applies the smallest validated patch with `expected_text` |
 | Apply several related ranges in one review unit | `request_vscode_workspace_edit` | batches edits together and reduces drift windows across chats |
-| Replace one anchored exact-text match | `safe_vscode_edit` | derives exact coordinates from one live match and validates the replacement |
+| Replace one anchored exact-text match in an active workspace | `safe_vscode_edit` | derives exact coordinates from one live match and validates the replacement |
+| Read one direct-on-disk file before an exact or anchored edit | `get_file_range` | returns fresh numbered lines and file metadata without requiring a VS Code session |
+| Read several direct-on-disk files before coordinated edits | `get_multiple_file_ranges` | returns fresh numbered lines for multiple files from one request without requiring a VS Code session |
+| Replace one exact range directly on disk without a VS Code session | `request_file_edit` | applies one validated line-and-column edit when editor context is unavailable or unnecessary |
+| Replace one anchored exact-text match directly on disk | `safe_file_edit` | derives exact coordinates from one live on-disk match and validates the replacement |
+| Replace one anchored body directly on disk | `anchored_file_edit` | replaces the body between stable start and end anchors without requiring a VS Code session |
 | Re-open the same file for review | `open_vscode_file` | keeps the session aligned with the active editor |
 | Close a finished session | `close_vscode_session` | reduces accidental reuse across later chats |
+
 
 Development and packaging:
 - open `vscode-bridge-extension` in VS Code and press `F5` to launch the extension development host

@@ -7,6 +7,11 @@ set "MCP_LAUNCHER_NAME=%~n0"
 
 if "%MCP_ROOT:~-1%"=="\" set "MCP_ROOT=%MCP_ROOT:~0,-1%"
 
+set "MCP_LOCAL_ENV=%MCP_ROOT%\launch_mcp_server.local.bat"
+if exist "%MCP_LOCAL_ENV%" (
+  call "%MCP_LOCAL_ENV%"
+)
+
 set "MCP_DIR=E:\Program Files\mcp\windows-code-search-mcp"
 set "WINDOWS_MCP_DIR=E:\Program Files\mcp\Windows-MCP"
 set "SEARCH_ENGINE_DIR=E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp"
@@ -116,12 +121,17 @@ set "OAUTH_ENABLED=true"
 set "OAUTH_BASE_URL=https://mcp.laughman233.shop"
 set "OAUTH_REDIRECT_URIS=https://chatgpt.com/connector/oauth/IPM1eV066eQL"
 set "OAUTH_CLIENT_ID=windows"
-set "OAUTH_CLIENT_SECRET=ls200126"
+rem OAUTH_CLIENT_SECRET is loaded from launch_mcp_server.local.bat
 set "OAUTH_TOKEN_ENDPOINT_AUTH_METHOD=client_secret_post"
 set "OAUTH_REQUIRED_SCOPES=mcp:access"
 set "OAUTH_VALID_SCOPES=mcp:access,offline_access"
 set "OAUTH_ALLOW_DYNAMIC_CLIENT_REGISTRATION=false"
 if "%OAUTH_STATE_MAX_TOKENS%"=="" set "OAUTH_STATE_MAX_TOKENS=50"
+if "%OAUTH_CLIENT_SECRET%"=="" (
+  call :log "ERROR: OAUTH_CLIENT_SECRET is not set. Put it in launch_mcp_server.local.bat"
+  pause
+  exit /b 1
+)
 
 set "WINDOWS_MCP_DIR=%WINDOWS_MCP_DIR%"
 set "SEARCH_ENGINE_DIR=%SEARCH_ENGINE_DIR%"

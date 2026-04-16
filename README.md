@@ -39,3 +39,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 ```
 
 Use the same approach for Python launchers by replacing `'%TOOL_EXE%'` with the full Python executable path.
+
+## Local secrets
+
+Do not put OAuth client secrets directly in tracked launcher scripts.
+
+Use `launch_mcp_server.local.bat` for local-only overrides such as `OAUTH_CLIENT_SECRET`.
+
+- `launch_mcp_server.local.bat` is ignored by Git.
+- `launch_mcp_server.bat` loads `launch_mcp_server.local.bat` automatically when it exists.
+- `launch_mcp_server.local.example.bat` shows the expected format for local overrides.

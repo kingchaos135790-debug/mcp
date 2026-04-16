@@ -5,7 +5,8 @@ Use these behaviors by default:
 - Prefer search tools first to locate candidate files and symbols before reading large files.
 - Use repo-scoped search when the target repository is known.
 - If the user is only asking a question, use `get_vscode_context_summary` first and `get_vscode_context` only when full context content is actually needed.
-- If the user wants a code edit, create or choose a VS Code session first, inspect `get_vscode_context_summary` and `get_vscode_diagnostics` when available, then use `get_vscode_file_range` to read the exact numbered lines immediately before editing.
+- If the user wants a code edit inside an active VS Code workspace, create or choose a VS Code session first, inspect `get_vscode_context_summary` and `get_vscode_diagnostics` when available, then use `get_vscode_file_range` to read the exact numbered lines immediately before editing.
+- If the user wants a code edit and no VS Code session is available, the file is outside the active workspace, or the task does not benefit from editor context, use `get_file_range` for one file or `get_multiple_file_ranges` for several files to read the freshest numbered lines first, then use `request_file_edit`, `safe_file_edit`, or `anchored_file_edit` for the smallest validated direct-on-disk change.
 - Prefer precise minimal edits over full-file rewrites.
 - Treat line numbers as temporary coordinates, not stable identifiers.
 - Include `expected_text` by default in edit requests to prevent stale-range edits.
@@ -19,6 +20,7 @@ Use these behaviors by default:
 - If an edit fails because `expected_text` does not match or the target drifted, re-read the exact range with `get_vscode_file_range`, refresh `expected_text`, and retry with a narrower anchored change.
 - If OAuth or tool-calling appears unresponsive, verify that `/.well-known/openid-configuration` returns `200` and that the public tunnel targets `127.0.0.1:8000` rather than `localhost:8000` to avoid IPv6 `::1` origin mismatches.
 
+
 Tool selection guidance:
 
 - `create_vscode_session`: reserve a dedicated VS Code bridge session for one chat or task before edits begin.
@@ -29,22 +31,31 @@ Tool selection guidance:
 - `get_vscode_context`: inspect full context item contents.
 - `get_vscode_file_range`: read workspace file content with numbered lines.
 - `get_vscode_diagnostics`: inspect Problems data from VS Code.
-- `request_vscode_edit`: apply one validated line-and-column text edit.
-- `request_vscode_workspace_edit`: apply multiple coordinated validated edits.
-- `safe_vscode_edit`: find one anchored exact text match and convert it into a validated edit.
-- `anchored_vscode_edit`: replace the body between a unique start anchor and end anchor with optional body validation.
+- `get_file_range`: read one direct-on-disk file with numbered lines and metadata before an exact or anchored edit without a VS Code session.
+- `get_multiple_file_ranges`: read several direct-on-disk files with numbered lines and metadata before coordinated exact or anchored edits without a VS Code session.
+- `request_vscode_edit`: apply one validated line-and-column text edit inside an active VS Code workspace.
+- `request_vscode_workspace_edit`: apply multiple coordinated validated edits inside an active VS Code workspace.
+- `safe_vscode_edit`: find one anchored exact text match in an active VS Code workspace and convert it into a validated edit.
+- `anchored_vscode_edit`: replace the body between a unique start anchor and end anchor in an active VS Code workspace with optional body validation.
+- `request_file_edit`: apply one validated line-and-column text edit directly on disk without a VS Code session.
+- `safe_file_edit`: find one exact text match directly on disk and convert it into a validated edit without a VS Code session.
+- `anchored_file_edit`: replace the body between a unique start anchor and end anchor directly on disk with optional body validation and no VS Code session.
 - `open_vscode_file`: reveal a file at a specific location in VS Code.
+
 
 Editing workflow:
 
-1. Create or choose a session with `create_vscode_session` or `list_vscode_sessions`.
+1. Create or choose a session with `create_vscode_session` or `list_vscode_sessions` when you are editing inside an active VS Code workspace.
 2. Find the likely file or symbol with search.
 3. Inspect `get_vscode_context_summary` and `get_vscode_diagnostics` when relevant.
-4. Read the exact region with `get_vscode_file_range`.
+4. Read the exact region with `get_vscode_file_range` when you are editing inside an active VS Code workspace.
 5. Verify the intended change against the freshly returned lines.
-6. Apply the smallest safe edit with `expected_text`, use `safe_vscode_edit` for one anchored exact-text replacement, or use `anchored_vscode_edit` when a block is best targeted by stable start/end anchors.
-7. Re-read before any follow-up edit.
-8. Close stale or finished sessions with `close_vscode_session` when they should not be reused.
+6. Apply the smallest safe edit with `expected_text`, use `safe_vscode_edit` for one anchored exact-text replacement inside an active workspace, or use `anchored_vscode_edit` when a block is best targeted by stable start/end anchors inside that workspace.
+7. When no VS Code session is available, the file is outside the active workspace, or the task does not benefit from editor context, use `get_file_range` for one file or `get_multiple_file_ranges` for several files to read the freshest numbered lines first.
+8. Then use `request_file_edit`, `safe_file_edit`, or `anchored_file_edit` for the smallest validated direct-on-disk change.
+9. Re-read before any follow-up edit.
+10. Close stale or finished sessions with `close_vscode_session` when they should not be reused.
+
 
 Question-answering workflow:
 

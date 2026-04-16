@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -12,6 +13,7 @@ from utils.text_normalization import (
     extract_live_range_text,
     normalize_vscode_text,
     offset_to_line_and_column,
+    position_to_offset,
     resolve_anchor_edit_offsets,
 )
 
@@ -23,6 +25,59 @@ from .common import (
     resolve_vscode_workspace_root,
     session_bound_tool,
 )
+
+
+def resolve_direct_file_path(file_path: str, repo_root: str = "") -> Path:
+    raw_path = file_path.strip()
+    if not raw_path:
+        raise ValueError("file_path is required")
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        base_path = Path(repo_root).expanduser() if repo_root.strip() else Path.cwd()
+        candidate = base_path / candidate
+    resolved = candidate.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"File not found: {resolved}")
+    if not resolved.is_file():
+        raise ValueError(f"Path is not a file: {resolved}")
+    return resolved
+
+
+def apply_direct_file_edit(
+    file_path: str,
+    *,
+    start_line: int,
+    start_column: int,
+    end_line: int,
+    end_column: int,
+    new_text: str,
+    expected_text: str = "",
+    repo_root: str = "",
+) -> dict[str, object]:
+    resolved = resolve_direct_file_path(file_path, repo_root=repo_root)
+    content = normalize_vscode_text(resolved.read_text(encoding="utf-8", errors="replace"))
+    start_offset = position_to_offset(content, start_line, start_column)
+    end_offset = position_to_offset(content, end_line, end_column)
+    if end_offset < start_offset:
+        raise ValueError("end position must be >= start position")
+    live_expected_text = content[start_offset:end_offset]
+    normalized_expected_text = normalize_vscode_text(expected_text) if expected_text else ""
+    if normalized_expected_text and live_expected_text != normalized_expected_text:
+        raise ValueError("expected_text did not match the live text at the requested range")
+    updated_content = content[:start_offset] + normalize_vscode_text(new_text) + content[end_offset:]
+    resolved.write_text(updated_content, encoding="utf-8", newline="\n")
+    return {
+        "status": "ok",
+        "filePath": str(resolved),
+        "expectedText": live_expected_text,
+        "applied": True,
+        "range": {
+            "startLine": start_line,
+            "startColumn": start_column,
+            "endLine": end_line,
+            "endColumn": end_column,
+        },
+    }
 
 
 class VSCodeEditExtension:
@@ -354,6 +409,229 @@ class VSCodeEditExtension:
                     },
                 )
             return format_tool_result(require_vscode_command_success("anchored_vscode_edit", result))
+
+        @mcp.tool(
+            name="get_file_range",
+            description="Read a file on disk with numbered lines so MCP clients can inspect exact ranges and prepare safe direct-on-disk anchor edits without a VS Code session.",
+            annotations=ToolAnnotations(
+                title="get_file_range",
+                readOnlyHint=True,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=False,
+            ),
+        )
+        def get_file_range(
+            file_path: str = "",
+            start_line: int = 1,
+            end_line: int = 0,
+            context_before: int = 0,
+            context_after: int = 0,
+            repo_root: str = "",
+        ) -> str:
+            resolved = resolve_direct_file_path(file_path, repo_root=repo_root)
+            payload = read_numbered_file_range(
+                resolved,
+                start_line=start_line,
+                end_line=end_line,
+                context_before=context_before,
+                context_after=context_after,
+            )
+            payload["repoRoot"] = str(Path(repo_root).expanduser().resolve()) if repo_root.strip() else ""
+            payload["directFileRead"] = True
+            payload["anchorEditHint"] = (
+                "Use this fresh range to derive expected_text for request_file_edit or to confirm stable start_anchor and end_anchor before anchored_file_edit."
+            )
+            return format_tool_result(payload)
+
+        @mcp.tool(
+            name="get_multiple_file_ranges",
+            description="Read multiple files on disk with numbered lines so MCP clients can inspect several exact ranges and prepare coordinated direct-on-disk anchor edits without a VS Code session.",
+            annotations=ToolAnnotations(
+                title="get_multiple_file_ranges",
+                readOnlyHint=True,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=False,
+            ),
+        )
+        def get_multiple_file_ranges(
+            files_json: str = "",
+            repo_root: str = "",
+        ) -> str:
+            try:
+                parsed = json.loads(files_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid files_json: {exc}") from exc
+            if not isinstance(parsed, list):
+                raise ValueError("files_json must decode to a list")
+
+            results: list[dict[str, object]] = []
+            for item in parsed:
+                if not isinstance(item, dict):
+                    raise ValueError("Each files_json item must be an object")
+                file_path_value = str(item.get("filePath") or item.get("file_path") or "")
+                if not file_path_value.strip():
+                    raise ValueError("Each files_json item must include filePath")
+                item_repo_root = str(item.get("repoRoot") or item.get("repo_root") or repo_root)
+                resolved = resolve_direct_file_path(file_path_value, repo_root=item_repo_root)
+                payload = read_numbered_file_range(
+                    resolved,
+                    start_line=int(item.get("startLine") or item.get("start_line") or 1),
+                    end_line=int(item.get("endLine") or item.get("end_line") or 0),
+                    context_before=int(item.get("contextBefore") or item.get("context_before") or 0),
+                    context_after=int(item.get("contextAfter") or item.get("context_after") or 0),
+                )
+                payload["repoRoot"] = str(Path(item_repo_root).expanduser().resolve()) if item_repo_root.strip() else ""
+                payload["directFileRead"] = True
+                payload["anchorEditHint"] = (
+                    "Use each fresh range to derive expected_text for request_file_edit or to confirm stable start_anchor and end_anchor before anchored_file_edit."
+                )
+                results.append(payload)
+
+            return format_tool_result(
+                {
+                    "repoRoot": str(Path(repo_root).expanduser().resolve()) if repo_root.strip() else "",
+                    "count": len(results),
+                    "files": results,
+                    "directFileRead": True,
+                }
+            )
+
+        @mcp.tool(
+            name="request_file_edit",
+            description="Apply one validated text edit directly to a file on disk using exact line and column ranges, without a VS Code session.",
+            annotations=ToolAnnotations(
+                title="request_file_edit",
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        def request_file_edit(
+            file_path: str = "",
+            start_line: int = 0,
+            start_column: int = 0,
+            end_line: int = 0,
+            end_column: int = 0,
+            new_text: str = "",
+            expected_text: str = "",
+            repo_root: str = "",
+        ) -> str:
+            result = apply_direct_file_edit(
+                file_path,
+                start_line=start_line,
+                start_column=start_column,
+                end_line=end_line,
+                end_column=end_column,
+                new_text=new_text,
+                expected_text=expected_text,
+                repo_root=repo_root,
+            )
+            return format_tool_result(result)
+
+        @mcp.tool(
+            name="safe_file_edit",
+            description="Find one exact text match in a file on disk, convert it into a validated range edit, and apply it without a VS Code session.",
+            annotations=ToolAnnotations(
+                title="safe_file_edit",
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        def safe_file_edit(
+            file_path: str = "",
+            search_text: str = "",
+            replacement_text: str = "",
+            start_line: int = 1,
+            end_line: int = 0,
+            repo_root: str = "",
+        ) -> str:
+            if not search_text:
+                raise ValueError("search_text is required")
+            resolved = resolve_direct_file_path(file_path, repo_root=repo_root)
+            payload = read_numbered_file_range(resolved, start_line=start_line, end_line=end_line)
+            haystack = normalize_vscode_text(str(payload.get("content", "")))
+            needle = normalize_vscode_text(search_text)
+            match_count = haystack.count(needle)
+            if match_count == 0:
+                raise ValueError("search_text was not found in the requested file range")
+            if match_count > 1:
+                raise ValueError("search_text matched more than once; narrow the line window or provide a more specific anchor")
+            window_start_line = int(payload.get("startLine") or 1)
+            start_offset = haystack.index(needle)
+            end_offset = start_offset + len(needle)
+            match_start_line, match_start_column = offset_to_line_and_column(haystack, start_offset, base_line=window_start_line)
+            match_end_line, match_end_column = offset_to_line_and_column(haystack, end_offset, base_line=window_start_line)
+            result = apply_direct_file_edit(
+                str(resolved),
+                start_line=match_start_line,
+                start_column=match_start_column,
+                end_line=match_end_line,
+                end_column=match_end_column,
+                new_text=replacement_text,
+                expected_text=needle,
+            )
+            result.setdefault("safeEdit", True)
+            result.setdefault("matchedText", needle)
+            return format_tool_result(result)
+
+        @mcp.tool(
+            name="anchored_file_edit",
+            description="Find a unique region between start and end anchors in a file on disk, validate optional expected body text, and replace that body without a VS Code session.",
+            annotations=ToolAnnotations(
+                title="anchored_file_edit",
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        def anchored_file_edit(
+            file_path: str = "",
+            start_anchor: str = "",
+            end_anchor: str = "",
+            replacement_text: str = "",
+            expected_body: str = "",
+            start_line: int = 1,
+            end_line: int = 0,
+            repo_root: str = "",
+        ) -> str:
+            if not start_anchor:
+                raise ValueError("start_anchor is required")
+            if not end_anchor:
+                raise ValueError("end_anchor is required")
+            resolved = resolve_direct_file_path(file_path, repo_root=repo_root)
+            payload = read_numbered_file_range(resolved, start_line=start_line, end_line=end_line)
+            haystack = normalize_vscode_text(str(payload.get("content", "")))
+            body_start_offset, body_end_offset, _matched_body = resolve_anchor_edit_offsets(
+                haystack,
+                start_anchor=start_anchor,
+                end_anchor=end_anchor,
+                expected_body=expected_body,
+            )
+            window_start_line = int(payload.get("startLine") or 1)
+            match_start_line, match_start_column = offset_to_line_and_column(haystack, body_start_offset, base_line=window_start_line)
+            match_end_line, match_end_column = offset_to_line_and_column(haystack, body_end_offset, base_line=window_start_line)
+            live_body = haystack[body_start_offset:body_end_offset]
+            if expected_body and normalize_vscode_text(expected_body) != live_body:
+                raise ValueError("expected_body no longer matches the live text between start_anchor and end_anchor")
+            result = apply_direct_file_edit(
+                str(resolved),
+                start_line=match_start_line,
+                start_column=match_start_column,
+                end_line=match_end_line,
+                end_column=match_end_column,
+                new_text=replacement_text,
+                expected_text=live_body,
+            )
+            result.setdefault("anchorBasedEdit", True)
+            result.setdefault("matchedBody", live_body)
+            result.setdefault("anchors", {"start": normalize_vscode_text(start_anchor), "end": normalize_vscode_text(end_anchor)})
+            return format_tool_result(result)
 
         @mcp.tool(
             name="open_vscode_file",

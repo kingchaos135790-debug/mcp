@@ -2,6 +2,38 @@
   "version": 1,
   "repositories": [
     {
+      "repo_root": "E:\\GodotProject\\wasm",
+      "watch": true,
+      "auto_index_on_start": true,
+      "last_indexed_at": "2026-04-15T09:23:01.400410Z",
+      "last_index_reason": "startup",
+      "last_result": {
+        "repoId": "wasm-6a60eac63243",
+        "repoName": "wasm",
+        "repoRoot": "E:\\GodotProject\\wasm",
+        "indexedFiles": 298,
+        "changedFiles": 0,
+        "unchangedFiles": 298,
+        "deletedFiles": 0,
+        "qdrant": {
+          "collection": "code_chunks",
+          "upsertedPoints": 0,
+          "deletedPoints": 0
+        },
+        "localLexicalIndex": {
+          "ok": true,
+          "path": "E:\\mcp-index-data\\repositories\\wasm-6a60eac63243\\local-lexical-index.json",
+          "documents": 298
+        },
+        "lexicalSearch": {
+          "backend": "ripgrep",
+          "available": true,
+          "message": "ripgrep is available for lexical search"
+        }
+      },
+      "last_error": ""
+    },
+    {
       "repo_root": "E:\\Program Files\\bt-hid-lua",
       "watch": true,
       "auto_index_on_start": true,
@@ -38,7 +70,7 @@
       "watch": true,
       "auto_index_on_start": true,
       "last_indexed_at": "2026-04-15T04:46:34.645905Z",
-      "last_index_reason": "watch",
+      "last_index_reason": "startup",
       "last_result": {
         "repoId": "mcp-07c23e33c840",
         "repoName": "mcp",
@@ -69,8 +101,8 @@
       "repo_root": "E:\\Program Files\\mcp\\windows-code-search-mcp",
       "watch": true,
       "auto_index_on_start": true,
-      "last_indexed_at": "2026-04-15T04:44:31.537285Z",
-      "last_index_reason": "watch",
+      "last_indexed_at": "2026-04-15T07:47:55.913166Z",
+      "last_index_reason": "startup",
       "last_result": {
         "repoId": "windows-code-search-mcp-80fbfdd19718",
         "repoName": "windows-code-search-mcp",
