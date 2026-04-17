@@ -5,7 +5,6 @@ windows-code-search-mcp/managed-repositories.json
 launch_mcp_server.bat
 cloudflare.bat
 cloudflare.exe
-open_windows_code_search_repo_manager.bat
 mcp_inspector.bat
 patch_stateless_fix.ps1
 _server_slice_*.txt
