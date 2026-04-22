@@ -333,7 +333,7 @@ class VSCodeEditExtension:
 
         @mcp.tool(
             name="anchored_vscode_edit",
-            description="Find a unique region between start and end anchors in a VS Code workspace file, validate optional expected body text, and apply a validated edit to just that anchored body.",
+            description="Find a unique region between exact start and end anchor lines in a VS Code workspace file, validate optional expected body text, and apply a validated edit to just that anchored body. The start_anchor and end_anchor must match the full line text exactly. Optionally include the modified file with numbered lines in the success payload.",
             annotations=ToolAnnotations(
                 title="anchored_vscode_edit",
                 readOnlyHint=False,
@@ -350,6 +350,7 @@ class VSCodeEditExtension:
             end_anchor: str = "",
             replacement_text: str = "",
             expected_body: str = "",
+            include_modified_file_with_lines: bool = False,
             start_line: int = 1,
             end_line: int = 0,
             timeout_seconds: int = 30,
@@ -408,7 +409,12 @@ class VSCodeEditExtension:
                         "endColumn": match_end_column,
                     },
                 )
-            return format_tool_result(require_vscode_command_success("anchored_vscode_edit", result))
+                result = require_vscode_command_success("anchored_vscode_edit", result)
+                if include_modified_file_with_lines:
+                    result["modifiedFile"] = read_numbered_file_range(resolved, start_line=1, end_line=0)
+            else:
+                result = require_vscode_command_success("anchored_vscode_edit", result)
+            return format_tool_result(result)
 
         @mcp.tool(
             name="get_file_range",
@@ -581,7 +587,7 @@ class VSCodeEditExtension:
 
         @mcp.tool(
             name="anchored_file_edit",
-            description="Find a unique region between start and end anchors in a file on disk, validate optional expected body text, and replace that body without a VS Code session.",
+            description="Find a unique region between exact start and end anchor lines in a file on disk, validate optional expected body text, and replace that body without a VS Code session. The start_anchor and end_anchor must match the full line text exactly. Optionally include the modified file with numbered lines in the success payload.",
             annotations=ToolAnnotations(
                 title="anchored_file_edit",
                 readOnlyHint=False,
@@ -596,6 +602,7 @@ class VSCodeEditExtension:
             end_anchor: str = "",
             replacement_text: str = "",
             expected_body: str = "",
+            include_modified_file_with_lines: bool = False,
             start_line: int = 1,
             end_line: int = 0,
             repo_root: str = "",
@@ -628,9 +635,22 @@ class VSCodeEditExtension:
                 new_text=replacement_text,
                 expected_text=live_body,
             )
-            result.setdefault("anchorBasedEdit", True)
-            result.setdefault("matchedBody", live_body)
-            result.setdefault("anchors", {"start": normalize_vscode_text(start_anchor), "end": normalize_vscode_text(end_anchor)})
+            if isinstance(result, dict):
+                result.setdefault("anchorBasedEdit", True)
+                result.setdefault("matchedBody", live_body)
+                result.setdefault("filePath", str(resolved))
+                result.setdefault("anchors", {"start": normalize_vscode_text(start_anchor), "end": normalize_vscode_text(end_anchor)})
+                result.setdefault(
+                    "range",
+                    {
+                        "startLine": match_start_line,
+                        "startColumn": match_start_column,
+                        "endLine": match_end_line,
+                        "endColumn": match_end_column,
+                    },
+                )
+                if include_modified_file_with_lines and str(result.get("status", "")).lower() == "ok":
+                    result["modifiedFile"] = read_numbered_file_range(resolved, start_line=1, end_line=0)
             return format_tool_result(result)
 
         @mcp.tool(

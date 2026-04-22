@@ -1,4 +1,4 @@
-import importlib.util
+﻿import importlib.util
 import sys
 import types
 import unittest
@@ -189,7 +189,7 @@ class SearchRerankTests(unittest.TestCase):
             },
             {
                 "source": "ripgrep",
-                "filePath": "mcp-instructions.md",
+                "filePath": "README.md",
                 "text": "create_vscode_session can now promote the real source definition",
                 "score": 0.9,
             },
@@ -230,3 +230,4 @@ class SearchRerankTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

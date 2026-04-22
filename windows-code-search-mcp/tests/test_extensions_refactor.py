@@ -430,6 +430,47 @@ class VSCodeEditExtensionTests(unittest.TestCase):
 
         self.assertEqual(bridge.edit_calls, [])
 
+    def test_resolve_anchor_edit_offsets_requires_exact_anchor_lines(self) -> None:
+        with self.assertRaisesRegex(ValueError, "start_anchor exact line was not found"):
+            vscode_edits.resolve_anchor_edit_offsets(
+                "prefix start\nlive\nend suffix\n",
+                start_anchor="start",
+                end_anchor="end",
+            )
+
+    def test_anchored_vscode_edit_can_include_modified_file_with_numbered_lines(self) -> None:
+        bridge = FakeBridge()
+        mcp = FakeMCP()
+        context = FakeContext(bridge)
+        VSCodeEditExtension().register(mcp, context)
+
+        read_payloads = [
+            {"content": "start\nlive\nend\n", "startLine": 1},
+            {"content": "start\nupdated\nend\n", "startLine": 1, "endLine": 3, "lineCount": 3, "lines": [{"lineNumber": 1, "text": "start"}, {"lineNumber": 2, "text": "updated"}, {"lineNumber": 3, "text": "end"}]},
+        ]
+        with patch.object(vscode_edits, "resolve_workspace_file_path", return_value="C:/repo/app.py"):
+            with patch.object(vscode_edits, "read_numbered_file_range", side_effect=read_payloads) as read_mock:
+                with patch.object(vscode_edits, "resolve_anchor_edit_offsets", return_value=(6, 10, "live")):
+                    with patch.object(vscode_edits, "extract_live_range_text", return_value=("C:/repo/app.py", "live")):
+                        result = asyncio.run(
+                            mcp.tools["anchored_vscode_edit"]["func"](
+                                session_id="session-1",
+                                file_path="app.py",
+                                start_anchor="start",
+                                end_anchor="end",
+                                replacement_text="updated",
+                                include_modified_file_with_lines=True,
+                            )
+                        )
+
+        payload = json.loads(result)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["modifiedFile"]["content"], "start\nupdated\nend\n")
+        self.assertEqual(payload["modifiedFile"]["lines"][1]["lineNumber"], 2)
+        self.assertEqual(payload["modifiedFile"]["lines"][1]["text"], "updated")
+        self.assertEqual(read_mock.call_count, 2)
+        self.assertEqual(bridge.edit_calls[0]["new_text"], "updated")
+
     def test_get_file_range_reads_numbered_lines_without_vscode(self) -> None:
         mcp = FakeMCP()
         context = FakeContext()
@@ -525,13 +566,17 @@ class VSCodeEditExtensionTests(unittest.TestCase):
             target.write_text("before\n<start>\nlive\n<end>\nafter\n", encoding="utf-8", newline="\n")
             result = mcp.tools["anchored_file_edit"]["func"](
                 file_path=str(target),
-                start_anchor="<start>\n",
-                end_anchor="\n<end>",
-                replacement_text="updated",
-                expected_body="live",
+                start_anchor="<start>",
+                end_anchor="<end>",
+                replacement_text="updated\n",
+                expected_body="live\n",
+                include_modified_file_with_lines=True,
             )
             payload = json.loads(result)
             self.assertTrue(payload["anchorBasedEdit"])
+            self.assertEqual(payload["modifiedFile"]["content"], "before\n<start>\nupdated\n<end>\nafter")
+            self.assertEqual(payload["modifiedFile"]["lines"][2]["lineNumber"], 3)
+            self.assertEqual(payload["modifiedFile"]["lines"][2]["text"], "updated")
             self.assertEqual(target.read_text(encoding="utf-8"), "before\n<start>\nupdated\n<end>\nafter\n")
 
 

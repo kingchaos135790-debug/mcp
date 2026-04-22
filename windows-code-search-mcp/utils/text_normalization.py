@@ -74,13 +74,30 @@ def resolve_anchor_edit_offsets(content: str, start_anchor: str, end_anchor: str
     normalized_content = normalize_vscode_text(content)
     normalized_start_anchor = normalize_vscode_text(start_anchor)
     normalized_end_anchor = normalize_vscode_text(end_anchor)
-    start_anchor_offset = find_unique_substring(normalized_content, normalized_start_anchor, label="start_anchor")
+    normalized_lines = normalized_content.split("\n")
+
+    start_anchor_line_indexes = [index for index, line in enumerate(normalized_lines) if line == normalized_start_anchor]
+    if not start_anchor_line_indexes:
+        raise ValueError("start_anchor exact line was not found in the requested file range")
+    if len(start_anchor_line_indexes) > 1:
+        raise ValueError("start_anchor exact line matched more than once; narrow the line window or provide a more specific anchor")
+
+    start_line_index = start_anchor_line_indexes[0]
+    start_anchor_offset = sum(len(line) + 1 for line in normalized_lines[:start_line_index])
     body_start_offset = start_anchor_offset + len(normalized_start_anchor)
-    end_anchor_offset = normalized_content.find(normalized_end_anchor, body_start_offset)
-    if end_anchor_offset < 0:
-        raise ValueError("end_anchor was not found after start_anchor in the requested file range")
-    if normalized_content.find(normalized_end_anchor, end_anchor_offset + 1) >= 0:
-        raise ValueError("end_anchor matched more than once after start_anchor; narrow the line window or provide a more specific anchor")
+    if body_start_offset < len(normalized_content) and normalized_content[body_start_offset:body_start_offset + 1] == "\n":
+        body_start_offset += 1
+
+    end_anchor_line_indexes = [
+        index for index, line in enumerate(normalized_lines[start_line_index + 1 :], start=start_line_index + 1) if line == normalized_end_anchor
+    ]
+    if not end_anchor_line_indexes:
+        raise ValueError("end_anchor exact line was not found after start_anchor in the requested file range")
+    if len(end_anchor_line_indexes) > 1:
+        raise ValueError("end_anchor exact line matched more than once after start_anchor; narrow the line window or provide a more specific anchor")
+
+    end_line_index = end_anchor_line_indexes[0]
+    end_anchor_offset = sum(len(line) + 1 for line in normalized_lines[:end_line_index])
     matched_body = normalized_content[body_start_offset:end_anchor_offset]
     normalized_expected_body = normalize_vscode_text(expected_body) if expected_body else ""
     if normalized_expected_body and matched_body != normalized_expected_body:
