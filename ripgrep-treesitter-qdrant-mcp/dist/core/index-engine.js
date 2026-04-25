@@ -1,13 +1,16 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { getSearchEngineConfig } from "./config.js";
 import { getRepoStoragePaths, hashText, removeIndexedRepository, resolveRepository, upsertIndexedRepository, writeRepoManifest, readRepoManifest, } from "./repository-store.js";
 import { checkQdrantConnection, deletePoints, deletePointsByFilter, ensureCollection, fakeEmbedding, upsertChunks, } from "../lib/qdrant-utils.js";
-import { listSourceFiles, readText, toPosixRelative } from "../lib/fs-utils.js";
+import { discoverSourceFiles, readText, toPosixRelative, } from "../lib/fs-utils.js";
 import { extractCodeChunks } from "../lib/tree-sitter-utils.js";
 import { buildLocalLexicalDocument, writeLocalLexicalIndex } from "../lib/local-lexical-utils.js";
 import { hasRipgrep } from "../lib/ripgrep-utils.js";
+const execFileAsync = promisify(execFile);
 function buildPointId(repoId, relativePath, chunk) {
     const hex = hashText([
         repoId,
@@ -45,21 +48,285 @@ function buildRepoFilter(repoId) {
         ],
     };
 }
-export async function indexRepository(repoRootInput) {
+function normalizeIndexMode(mode) {
+    switch (mode) {
+        case "force":
+        case "verify":
+            return mode;
+        case "incremental":
+        default:
+            return "incremental";
+    }
+}
+function normalizeHashMode(hashMode, mode = "incremental") {
+    switch (hashMode) {
+        case "hash-changed-candidates":
+        case "hash-all-candidates":
+        case "metadata-first":
+            return hashMode;
+        default:
+            return mode === "force" ? "hash-all-candidates" : "metadata-first";
+    }
+}
+function unique(values) {
+    return Array.from(new Set(values.filter(Boolean)));
+}
+async function readRepoIndexConfig(repoRoot) {
+    try {
+        const raw = await fs.readFile(path.join(repoRoot, ".mcp-index.json"), "utf8");
+        const parsed = JSON.parse(raw);
+        return {
+            includeDocs: typeof parsed.includeDocs === "boolean" ? parsed.includeDocs : undefined,
+            includeGenerated: typeof parsed.includeGenerated === "boolean" ? parsed.includeGenerated : undefined,
+            maxFileBytes: typeof parsed.maxFileBytes === "number" ? parsed.maxFileBytes : undefined,
+            extraExtensions: Array.isArray(parsed.extraExtensions) ? parsed.extraExtensions.map(String) : undefined,
+            extraIncludeGlobs: unique([
+                ...(Array.isArray(parsed.extraIncludeGlobs) ? parsed.extraIncludeGlobs.map(String) : []),
+                ...(Array.isArray(parsed.include) ? parsed.include.map(String) : []),
+            ]),
+            extraExcludeGlobs: unique([
+                ...(Array.isArray(parsed.extraExcludeGlobs) ? parsed.extraExcludeGlobs.map(String) : []),
+                ...(Array.isArray(parsed.exclude) ? parsed.exclude.map(String) : []),
+            ]),
+        };
+    }
+    catch {
+        return {};
+    }
+}
+function mergeCoverageOptions(configFileOptions, callOptions) {
+    return {
+        includeDocs: callOptions.includeDocs ?? configFileOptions.includeDocs,
+        includeGenerated: callOptions.includeGenerated ?? configFileOptions.includeGenerated,
+        maxFileBytes: callOptions.maxFileBytes ?? configFileOptions.maxFileBytes,
+        extraExtensions: unique([
+            ...(configFileOptions.extraExtensions || []),
+            ...(callOptions.extraExtensions || []),
+        ]),
+        extraIncludeGlobs: unique([
+            ...(configFileOptions.extraIncludeGlobs || []),
+            ...(callOptions.extraIncludeGlobs || []),
+        ]),
+        extraExcludeGlobs: unique([
+            ...(configFileOptions.extraExcludeGlobs || []),
+            ...(callOptions.extraExcludeGlobs || []),
+        ]),
+    };
+}
+async function getGitChangedFiles(repoRoot) {
+    try {
+        await fs.stat(path.join(repoRoot, ".git"));
+    }
+    catch {
+        return { available: false, files: [] };
+    }
+    try {
+        const { stdout } = await execFileAsync("git", ["ls-files", "-m", "-o", "--exclude-standard"], {
+            cwd: repoRoot,
+            maxBuffer: 4 * 1024 * 1024,
+        });
+        return {
+            available: true,
+            files: stdout
+                .split(/\r?\n/)
+                .map((line) => line.trim().replace(/\\/g, "/"))
+                .filter(Boolean),
+        };
+    }
+    catch (error) {
+        return {
+            available: true,
+            files: [],
+            error: error?.stderr || error?.message || "git change detection failed",
+        };
+    }
+}
+function buildWarnings(args) {
+    const warnings = [];
+    if (args.mode === "incremental" && args.changedFiles === 0 && args.deletedFiles === 0) {
+        warnings.push("No indexed source files changed. This does not mean no repository files changed. Docs, generated files, build outputs, and unsupported extensions may be excluded. Use mode=verify or mode=force to confirm freshness.");
+    }
+    if (!args.coverage.includeDocs && args.excludedFiles.unsupportedExtension > 0) {
+        warnings.push("Documentation files may be excluded by current index coverage. Run with includeDocs=true or add relevant extraExtensions to index them.");
+    }
+    if (!args.coverage.includeGenerated && args.excludedFiles.ignoredGlob > 0) {
+        warnings.push("Generated, build, dependency, or ignored paths may be excluded by current index coverage.");
+    }
+    if (args.hashMode === "metadata-first") {
+        warnings.push("Freshness uses metadata-first detection; same-size same-mtime content changes can be missed. Use hashMode=hash-all-candidates to verify content hashes.");
+    }
+    if (args.git?.error) {
+        warnings.push(`Git-assisted change detection was unavailable: ${args.git.error}`);
+    }
+    if (args.verification?.hashMismatches.length) {
+        warnings.push("Index may be stale; verification found hash mismatches.");
+    }
+    if (args.mode === "force") {
+        warnings.push("Index was force rebuilt for all candidate files.");
+    }
+    return unique(warnings);
+}
+async function buildVerificationReport(args) {
+    const previousFiles = args.previousManifest?.files || {};
+    const manifestMissingFiles = [];
+    const candidateFilesMissingFromManifest = [];
+    const hashMismatches = [];
+    for (const relativePath of Object.keys(previousFiles)) {
+        try {
+            await fs.stat(path.join(args.repoRoot, relativePath));
+        }
+        catch {
+            manifestMissingFiles.push(relativePath);
+        }
+    }
+    for (const file of args.candidateFiles) {
+        const relativePath = toPosixRelative(args.repoRoot, file);
+        const existing = previousFiles[relativePath];
+        if (!existing) {
+            candidateFilesMissingFromManifest.push(relativePath);
+            continue;
+        }
+        if (args.hashMode === "hash-all-candidates") {
+            const source = await readText(file);
+            const contentHash = hashText(source);
+            if (existing.hash !== contentHash) {
+                hashMismatches.push(relativePath);
+            }
+        }
+    }
+    const gitChangedIndexedFiles = [];
+    const gitChangedExcludedFiles = [];
+    for (const gitPath of args.git.files) {
+        if (args.candidateRelativePaths.has(gitPath)) {
+            gitChangedIndexedFiles.push(gitPath);
+        }
+        else {
+            const recentMatch = args.recentExcludedFiles.find((item) => item.path === gitPath);
+            gitChangedExcludedFiles.push({
+                path: gitPath,
+                reason: recentMatch?.reason || "outsideIndexCoverage",
+            });
+        }
+    }
+    return {
+        manifestPresent: Boolean(args.previousManifest),
+        manifestIndexedAt: args.previousManifest?.indexedAt,
+        manifestMissingFiles: manifestMissingFiles.sort((a, b) => a.localeCompare(b)),
+        candidateFilesMissingFromManifest: candidateFilesMissingFromManifest.sort((a, b) => a.localeCompare(b)),
+        recentExcludedFiles: args.recentExcludedFiles,
+        hashMismatches: hashMismatches.sort((a, b) => a.localeCompare(b)),
+        gitChangedIndexedFiles: gitChangedIndexedFiles.sort((a, b) => a.localeCompare(b)),
+        gitChangedExcludedFiles: gitChangedExcludedFiles.sort((a, b) => a.path.localeCompare(b.path)),
+    };
+}
+async function indexOneFile(args) {
+    const relativePath = toPosixRelative(args.repoRoot, args.file);
+    for (const pointId of args.existing?.qdrantPointIds || []) {
+        args.pointIdsToDelete.add(pointId);
+    }
+    const source = await readText(args.file);
+    const stat = await fs.stat(args.file);
+    const contentHash = hashText(source);
+    const chunks = extractCodeChunks(args.file, source);
+    const qdrantPointIds = [];
+    for (const chunk of chunks) {
+        const id = buildPointId(args.repoId, relativePath, chunk);
+        qdrantPointIds.push(id);
+        args.pointsToUpsert.push({
+            id,
+            vector: fakeEmbedding(`${relativePath}\n${chunk.symbol}\n${chunk.text}`),
+            payload: {
+                repoId: args.repoId,
+                repo: args.repoName,
+                repoRoot: args.repoRoot,
+                path: relativePath,
+                symbol: chunk.symbol,
+                kind: chunk.kind,
+                language: chunk.language,
+                startLine: chunk.startLine,
+                endLine: chunk.endLine,
+                content: chunk.text,
+            },
+        });
+    }
+    return {
+        path: relativePath,
+        hash: contentHash,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        qdrantPointIds,
+        document: buildLocalLexicalDocument(args.repoRoot, args.file, source, {
+            repoId: args.repoId,
+            repoName: args.repoName,
+        }),
+        updatedAt: args.indexedAt,
+    };
+}
+export async function indexRepository(repoRootInput, options = {}) {
     const config = getSearchEngineConfig();
-    const repoRoot = path.resolve(repoRootInput || process.env.REPO_ROOT || ".");
+    const repoRoot = path.resolve(repoRootInput || options.repoRoot || options.repo_root || process.env.REPO_ROOT || ".");
+    const mode = normalizeIndexMode(options.mode);
+    const hashMode = normalizeHashMode(options.hashMode, mode);
     const storage = getRepoStoragePaths(config, repoRoot);
     const indexedAt = new Date().toISOString();
     await fs.mkdir(storage.repoDir, { recursive: true });
+    const repoConfig = await readRepoIndexConfig(repoRoot);
+    const coverageOptions = mergeCoverageOptions(repoConfig, options);
+    const discovery = await discoverSourceFiles(repoRoot, coverageOptions);
+    const previousManifest = await readRepoManifest(storage.manifestPath);
+    const manifest = previousManifest ?? createEmptyManifest(storage.repoId, storage.repoName, storage.repoRoot);
+    const git = await getGitChangedFiles(repoRoot);
+    const files = discovery.files;
+    const candidateRelativePaths = new Set(files.map((file) => toPosixRelative(repoRoot, file)));
+    if (mode === "verify") {
+        const verification = await buildVerificationReport({
+            repoRoot,
+            previousManifest,
+            candidateFiles: files,
+            candidateRelativePaths,
+            recentExcludedFiles: discovery.recentExcludedFiles,
+            hashMode,
+            git,
+        });
+        return {
+            repoId: storage.repoId,
+            repoName: storage.repoName,
+            repoRoot: storage.repoRoot,
+            mode,
+            status: "ok",
+            manifestPath: storage.manifestPath,
+            scannedFilesystemEntries: discovery.scannedFilesystemEntries,
+            indexedCandidateFiles: discovery.indexedCandidateFiles,
+            changedIndexedFiles: 0,
+            unchangedIndexedFiles: files.length,
+            deletedIndexedFiles: verification.manifestMissingFiles.length,
+            excludedFiles: discovery.excludedFiles,
+            coverage: discovery.coverage,
+            freshnessStrategy: hashMode,
+            verification,
+            git: {
+                available: git.available,
+                changedFiles: git.files.length,
+                error: git.error,
+            },
+            warnings: buildWarnings({
+                mode,
+                hashMode,
+                changedFiles: 0,
+                deletedFiles: verification.manifestMissingFiles.length,
+                coverage: discovery.coverage,
+                excludedFiles: discovery.excludedFiles,
+                git,
+                verification,
+            }),
+        };
+    }
     const client = new QdrantClient({ url: config.qdrantUrl });
     const qdrantStatus = await checkQdrantConnection(client);
     if (!qdrantStatus.ok) {
         throw new Error(`Qdrant is not reachable at ${config.qdrantUrl}. ${qdrantStatus.message}`);
     }
     await ensureCollection(client, config.qdrantCollection);
-    const previousManifest = await readRepoManifest(storage.manifestPath)
-        ?? createEmptyManifest(storage.repoId, storage.repoName, storage.repoRoot);
-    const files = await listSourceFiles(repoRoot);
     const seenPaths = new Set();
     const nextFiles = {};
     const pointsToUpsert = [];
@@ -70,7 +337,7 @@ export async function indexRepository(repoRootInput) {
         const relativePath = toPosixRelative(repoRoot, file);
         seenPaths.add(relativePath);
         const stat = await fs.stat(file);
-        const existing = previousManifest.files[relativePath];
+        const existing = manifest.files[relativePath];
         const existingDocument = existing?.document
             ? {
                 ...existing.document,
@@ -78,7 +345,10 @@ export async function indexRepository(repoRootInput) {
                 repoName: storage.repoName,
             }
             : undefined;
-        if (existing && existing.size === stat.size && existing.mtimeMs === stat.mtimeMs && existingDocument) {
+        const forceRebuild = mode === "force";
+        const mustHash = forceRebuild || hashMode === "hash-all-candidates";
+        const metadataMatches = existing && existing.size === stat.size && existing.mtimeMs === stat.mtimeMs && existingDocument;
+        if (!forceRebuild && metadataMatches && !mustHash) {
             nextFiles[relativePath] = {
                 ...existing,
                 document: existingDocument,
@@ -86,59 +356,37 @@ export async function indexRepository(repoRootInput) {
             unchangedFiles += 1;
             continue;
         }
-        const source = await readText(file);
-        const contentHash = hashText(source);
-        if (existing && existing.hash === contentHash && existingDocument) {
-            nextFiles[relativePath] = {
-                ...existing,
-                size: stat.size,
-                mtimeMs: stat.mtimeMs,
-                document: existingDocument,
-            };
-            unchangedFiles += 1;
-            continue;
+        if (!forceRebuild && existing && existingDocument) {
+            const shouldReadAndHash = mustHash || !metadataMatches || hashMode === "hash-changed-candidates";
+            if (shouldReadAndHash) {
+                const source = await readText(file);
+                const contentHash = hashText(source);
+                if (existing.hash === contentHash) {
+                    nextFiles[relativePath] = {
+                        ...existing,
+                        size: stat.size,
+                        mtimeMs: stat.mtimeMs,
+                        document: existingDocument,
+                    };
+                    unchangedFiles += 1;
+                    continue;
+                }
+            }
         }
         changedFiles += 1;
-        for (const pointId of existing?.qdrantPointIds || []) {
-            pointIdsToDelete.add(pointId);
-        }
-        const chunks = extractCodeChunks(file, source);
-        const qdrantPointIds = [];
-        for (const chunk of chunks) {
-            const id = buildPointId(storage.repoId, relativePath, chunk);
-            qdrantPointIds.push(id);
-            pointsToUpsert.push({
-                id,
-                vector: fakeEmbedding(`${relativePath}\n${chunk.symbol}\n${chunk.text}`),
-                payload: {
-                    repoId: storage.repoId,
-                    repo: storage.repoName,
-                    repoRoot: storage.repoRoot,
-                    path: relativePath,
-                    symbol: chunk.symbol,
-                    kind: chunk.kind,
-                    language: chunk.language,
-                    startLine: chunk.startLine,
-                    endLine: chunk.endLine,
-                    content: chunk.text,
-                },
-            });
-        }
-        nextFiles[relativePath] = {
-            path: relativePath,
-            hash: contentHash,
-            size: stat.size,
-            mtimeMs: stat.mtimeMs,
-            qdrantPointIds,
-            document: buildLocalLexicalDocument(repoRoot, file, source, {
-                repoId: storage.repoId,
-                repoName: storage.repoName,
-            }),
-            updatedAt: indexedAt,
-        };
+        nextFiles[relativePath] = await indexOneFile({
+            file,
+            repoRoot,
+            repoId: storage.repoId,
+            repoName: storage.repoName,
+            indexedAt,
+            existing,
+            pointIdsToDelete,
+            pointsToUpsert,
+        });
     }
     let deletedFiles = 0;
-    for (const [relativePath, record] of Object.entries(previousManifest.files)) {
+    for (const [relativePath, record] of Object.entries(manifest.files)) {
         if (seenPaths.has(relativePath)) {
             continue;
         }
@@ -157,16 +405,18 @@ export async function indexRepository(repoRootInput) {
         repoId: storage.repoId,
         repoName: storage.repoName,
     });
-    const manifest = {
+    const nextManifest = {
         version: 1,
         repoId: storage.repoId,
         repoName: storage.repoName,
         repoRoot: storage.repoRoot,
         indexedAt,
         fileCount: documents.length,
+        coverage: discovery.coverage,
+        freshnessStrategy: hashMode,
         files: nextFiles,
     };
-    await writeRepoManifest(storage.manifestPath, manifest);
+    await writeRepoManifest(storage.manifestPath, nextManifest);
     await upsertIndexedRepository(config, {
         repoId: storage.repoId,
         repoName: storage.repoName,
@@ -178,14 +428,40 @@ export async function indexRepository(repoRootInput) {
         zoektIndexRoot: storage.zoektIndexRoot,
     });
     const ripgrepAvailable = await hasRipgrep();
+    const warnings = buildWarnings({
+        mode,
+        hashMode,
+        changedFiles,
+        deletedFiles,
+        coverage: discovery.coverage,
+        excludedFiles: discovery.excludedFiles,
+        git,
+    });
     return {
         repoId: storage.repoId,
         repoName: storage.repoName,
         repoRoot: storage.repoRoot,
+        mode,
+        status: "ok",
+        manifestPath: storage.manifestPath,
+        scannedFilesystemEntries: discovery.scannedFilesystemEntries,
+        indexedCandidateFiles: discovery.indexedCandidateFiles,
+        changedIndexedFiles: changedFiles,
+        unchangedIndexedFiles: unchangedFiles,
+        deletedIndexedFiles: deletedFiles,
         indexedFiles: files.length,
         changedFiles,
         unchangedFiles,
         deletedFiles,
+        excludedFiles: discovery.excludedFiles,
+        coverage: discovery.coverage,
+        freshnessStrategy: hashMode,
+        warnings,
+        git: {
+            available: git.available,
+            changedFiles: git.files.length,
+            error: git.error,
+        },
         qdrant: {
             collection: config.qdrantCollection,
             upsertedPoints: pointsToUpsert.length,

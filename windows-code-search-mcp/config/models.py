@@ -11,6 +11,7 @@ SEARCH_TOOL_NAMES = [
     "server_health",
     "list_indexed_repositories",
     "index_repository",
+    "diagnose_index_repository",
     "remove_indexed_repository",
     "list_auto_index_repositories",
     "add_auto_index_repository",

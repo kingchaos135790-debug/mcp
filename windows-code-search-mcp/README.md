@@ -194,14 +194,30 @@ The integrated MCP exposes these search-side tools:
 - `server_health`
 - `list_indexed_repositories`
 - `index_repository`
+- `diagnose_index_repository`
 - `remove_indexed_repository`
 - `list_auto_index_repositories`
 - `add_auto_index_repository`
 - `remove_auto_index_repository`
 
-Search tools accept an optional `repo` argument so you can target one indexed codebase, and `index_repository` now performs incremental file-level updates. `hybrid_code_search` also performs a post-engine rerank in the MCP wrapper so lexical corroboration and stronger feature matches surface ahead of semantic-only drift, while generated outputs are demoted.
+Search tools accept an optional `repo` argument so you can target one indexed codebase. `index_repository` supports `mode`, `hashMode`, and coverage options for freshness and index-coverage control; `diagnose_index_repository` runs the same engine verification path with `mode=verify` without updating Qdrant, local lexical artifacts, or managed auto-index status. `hybrid_code_search` also performs a post-engine rerank in the MCP wrapper so lexical corroboration and stronger feature matches surface ahead of semantic-only drift, while generated outputs are demoted.
 
 Repo scoping accepts a repository root, repo name, or repo id when it resolves uniquely.
+
+Manual indexing options exposed through `index_repository`:
+
+| Option | Purpose |
+| --- | --- |
+| `mode` | `incremental`, `force`, or `verify`. Defaults to `incremental`. |
+| `hashMode` | `metadata-first`, `hash-changed-candidates`, or `hash-all-candidates`. |
+| `includeDocs` | Includes common documentation files such as `.md`, `.mdx`, `.rst`, `.adoc`, and `.txt`. |
+| `includeGenerated` | Allows generated/build folders that are excluded by default, except dependency folders and Windows reserved names. |
+| `extraExtensions` | Adds indexed extensions such as `.json`, `.yml`, or `.shader`. |
+| `extraIncludeGlobs` | Adds include globs. Ignore rules still apply before include globs. |
+| `extraExcludeGlobs` | Adds repository-specific exclude globs. |
+| `maxFileBytes` | Overrides the maximum indexed file size. |
+
+Use `diagnose_index_repository` when you need a read-only freshness and coverage report. It defaults to `hashMode=hash-all-candidates` and returns manifest, candidate-file, excluded-file, Git, and hash-mismatch diagnostics.
 
 Current hybrid-search caveat:
 

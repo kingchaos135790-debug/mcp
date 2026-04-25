@@ -284,19 +284,29 @@ class RepositoryAutoIndexer:
                 repository.last_indexed_at or "never",
             )
 
-    async def run_index(self, repo_root: str, reason: str = "manual") -> dict[str, object]:
+    async def run_index(
+        self,
+        repo_root: str,
+        reason: str = "manual",
+        options: dict[str, object] | None = None,
+        record_result: bool = True,
+    ) -> dict[str, object]:
         normalized = normalize_repo_root(repo_root)
+        payload = dict(options or {})
+        payload["repoRoot"] = normalized
         async with self._index_lock:
             try:
-                result = await asyncio.to_thread(self.engine.run_tool, "index_repository", {"repoRoot": normalized})
+                result = await asyncio.to_thread(self.engine.run_tool, "index_repository", payload)
             except Exception as exc:
-                await self._record_index_failure(normalized, reason, str(exc))
+                if record_result:
+                    await self._record_index_failure(normalized, reason, str(exc))
                 raise
 
             if not isinstance(result, dict):
                 raise RuntimeError("Search engine returned an invalid index result")
 
-            await self._record_index_success(normalized, reason, result)
+            if record_result:
+                await self._record_index_success(normalized, reason, result)
             return result
 
     async def _record_index_success(self, repo_root: str, reason: str, result: dict[str, object]) -> None:

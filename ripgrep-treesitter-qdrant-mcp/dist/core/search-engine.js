@@ -1,7 +1,7 @@
-﻿import path from "node:path";
+import path from "node:path";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { clampLimit, getSearchEngineConfig } from "./config.js";
-import { listIndexedRepositories, resolveRepository } from "./repository-store.js";
+import { listIndexedRepositories, readRepoManifest, resolveRepository } from "./repository-store.js";
 import { checkQdrantConnection, semanticSearch } from "../lib/qdrant-utils.js";
 import { readLocalLexicalIndex, searchLocalLexicalDocuments } from "../lib/local-lexical-utils.js";
 import { hasRipgrep, queryRipgrep } from "../lib/ripgrep-utils.js";
@@ -52,12 +52,62 @@ function normalizeCaseMode(caseMode) {
             return "smart";
     }
 }
+function uniqueWarnings(values) {
+    return Array.from(new Set(values.filter(Boolean)));
+}
+function queryLooksLikeDocs(query) {
+    const normalized = query.toLowerCase();
+    return /\b(proposal|readme|docs?|documentation|markdown|mdx)\b/.test(normalized) || normalized.includes(".md");
+}
+function queryLooksLikeGenerated(query) {
+    const normalized = query.toLowerCase();
+    return /\b(generated|dist|build|coverage|node_modules|bin|obj)\b/.test(normalized) || normalized.includes(".next");
+}
+async function buildQueryCoverageWarnings(query, targetRepositories) {
+    const docsQuery = queryLooksLikeDocs(query);
+    const generatedQuery = queryLooksLikeGenerated(query);
+    if (!docsQuery && !generatedQuery) {
+        return [];
+    }
+    let missingCoverage = 0;
+    let docsExcluded = 0;
+    let generatedExcluded = 0;
+    const docsExtensions = new Set([".md", ".mdx", ".rst", ".adoc", ".txt"]);
+    for (const targetRepository of targetRepositories) {
+        const manifest = await readRepoManifest(targetRepository.manifestPath);
+        const coverage = manifest?.coverage;
+        if (!coverage) {
+            missingCoverage += 1;
+            continue;
+        }
+        const indexedExtensions = new Set((coverage.indexedExtensions || []).map((extension) => extension.toLowerCase()));
+        const docsCovered = Boolean(coverage.includeDocs) || Array.from(docsExtensions).some((extension) => indexedExtensions.has(extension));
+        if (docsQuery && !docsCovered) {
+            docsExcluded += 1;
+        }
+        if (generatedQuery && !coverage.includeGenerated) {
+            generatedExcluded += 1;
+        }
+    }
+    const warnings = [];
+    if (docsExcluded > 0) {
+        warnings.push("Query appears to target documentation, but documentation files are outside indexed coverage for one or more selected repositories. Run index_repository with includeDocs=true or add relevant extraExtensions to index them.");
+    }
+    if (generatedExcluded > 0) {
+        warnings.push("Query appears to target generated or build output, but generated/build paths are excluded from indexed coverage for one or more selected repositories.");
+    }
+    if (missingCoverage > 0) {
+        warnings.push("Coverage metadata is missing for one or more selected repositories. Re-run index_repository with the current engine to get precise coverage warnings.");
+    }
+    return uniqueWarnings(warnings);
+}
 async function resolveLexicalSearch(query, limit, repo, caseMode = "smart") {
     const config = getSearchEngineConfig();
     const ripgrepAvailable = await hasRipgrep();
     const repositories = await listIndexedRepositories(config);
     const selectedRepository = await resolveRepository(config, repo);
     const targetRepositories = selectedRepository ? [selectedRepository] : repositories;
+    const coverageWarnings = await buildQueryCoverageWarnings(query, targetRepositories);
     if (ripgrepAvailable) {
         try {
             const hits = [];
@@ -79,6 +129,7 @@ async function resolveLexicalSearch(query, limit, repo, caseMode = "smart") {
                     ripgrepMessage: "ripgrep available",
                     targetedRepoIds: targetRepositories.map((item) => item.repoId),
                     repositoryCount: repositories.length,
+                    warnings: coverageWarnings,
                 },
             };
         }
@@ -90,6 +141,7 @@ async function resolveLexicalSearch(query, limit, repo, caseMode = "smart") {
                     ...fallback.status,
                     ripgrepAvailable: true,
                     ripgrepMessage: error?.message || "ripgrep search failed",
+                    warnings: coverageWarnings,
                 },
             };
         }
@@ -101,6 +153,7 @@ async function resolveLexicalSearch(query, limit, repo, caseMode = "smart") {
             ...fallback.status,
             ripgrepAvailable: false,
             ripgrepMessage: "ripgrep is not installed",
+            warnings: coverageWarnings,
         },
     };
 }
@@ -177,14 +230,19 @@ export async function hybridCodeSearch(query, limit, repo) {
 export async function listIndexedCodebases() {
     const config = getSearchEngineConfig();
     const repositories = await listIndexedRepositories(config);
-    return repositories.map((repository) => ({
-        repoId: repository.repoId,
-        repoName: repository.repoName,
-        repoRoot: repository.repoRoot,
-        indexedAt: repository.indexedAt,
-        fileCount: repository.fileCount,
-        localLexicalIndexPath: repository.localLexicalIndexPath,
-        zoektIndexRoot: repository.zoektIndexRoot,
+    return Promise.all(repositories.map(async (repository) => {
+        const manifest = await readRepoManifest(repository.manifestPath);
+        return {
+            repoId: repository.repoId,
+            repoName: repository.repoName,
+            repoRoot: repository.repoRoot,
+            indexedAt: repository.indexedAt,
+            fileCount: repository.fileCount,
+            localLexicalIndexPath: repository.localLexicalIndexPath,
+            zoektIndexRoot: repository.zoektIndexRoot,
+            coverage: manifest?.coverage,
+            freshnessStrategy: manifest?.freshnessStrategy,
+        };
     }));
 }
 export async function searchEngineHealth() {
@@ -206,16 +264,18 @@ export async function searchEngineHealth() {
         registryPath: config.registryPath,
         legacyLocalLexicalIndexPath: config.localLexicalIndexPath,
         repositoryCount: repositories.length,
-        repositories: repositories.map((repository) => ({
-            repoId: repository.repoId,
-            repoName: repository.repoName,
-            repoRoot: repository.repoRoot,
-            indexedAt: repository.indexedAt,
-            fileCount: repository.fileCount,
+        repositories: await Promise.all(repositories.map(async (repository) => {
+            const manifest = await readRepoManifest(repository.manifestPath);
+            return {
+                repoId: repository.repoId,
+                repoName: repository.repoName,
+                repoRoot: repository.repoRoot,
+                indexedAt: repository.indexedAt,
+                fileCount: repository.fileCount,
+                coverage: manifest?.coverage,
+                freshnessStrategy: manifest?.freshnessStrategy,
+            };
         })),
         repoHint: path.resolve(process.env.REPO_ROOT || "."),
     };
 }
-
-
-

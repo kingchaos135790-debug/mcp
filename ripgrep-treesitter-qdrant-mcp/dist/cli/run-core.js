@@ -1,4 +1,4 @@
-﻿import { hybridCodeSearch, lexicalCodeSearch, listIndexedCodebases, searchEngineHealth, semanticCodeSearch, } from "../core/search-engine.js";
+import { hybridCodeSearch, lexicalCodeSearch, listIndexedCodebases, searchEngineHealth, semanticCodeSearch, } from "../core/search-engine.js";
 import { indexRepository, removeIndexedRepositoryData } from "../core/index-engine.js";
 function parseArgs() {
     const command = process.argv[2];
@@ -28,7 +28,7 @@ async function main() {
             process.stdout.write(JSON.stringify(await listIndexedCodebases(), null, 2));
             return;
         case "index_repository":
-            process.stdout.write(JSON.stringify(await indexRepository(payload.repoRoot), null, 2));
+            process.stdout.write(JSON.stringify(await indexRepository(payload.repoRoot, payload), null, 2));
             return;
         case "remove_indexed_repository":
             process.stdout.write(JSON.stringify(await removeIndexedRepositoryData(payload.repoRoot || payload.repo), null, 2));
@@ -41,4 +41,3 @@ main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
 });
-

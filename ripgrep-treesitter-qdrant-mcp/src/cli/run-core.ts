@@ -46,7 +46,7 @@ async function main() {
       process.stdout.write(JSON.stringify(await listIndexedCodebases(), null, 2));
       return;
     case "index_repository":
-      process.stdout.write(JSON.stringify(await indexRepository(payload.repoRoot), null, 2));
+      process.stdout.write(JSON.stringify(await indexRepository(payload.repoRoot, payload), null, 2));
       return;
     case "remove_indexed_repository":
       process.stdout.write(JSON.stringify(await removeIndexedRepositoryData(payload.repoRoot || payload.repo), null, 2));

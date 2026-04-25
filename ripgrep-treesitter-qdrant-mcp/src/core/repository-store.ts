@@ -14,6 +14,17 @@ export type RepoIndexedFileRecord = {
   updatedAt: string;
 };
 
+export type RepoIndexCoverage = {
+  indexedExtensions: string[];
+  ignoredGlobs: string[];
+  includeDocs: boolean;
+  includeGenerated: boolean;
+  extraExtensions?: string[];
+  extraIncludeGlobs?: string[];
+  extraExcludeGlobs?: string[];
+  maxFileBytes?: number;
+};
+
 export type RepoIndexManifest = {
   version: 1;
   repoId: string;
@@ -21,6 +32,8 @@ export type RepoIndexManifest = {
   repoRoot: string;
   indexedAt: string;
   fileCount: number;
+  coverage?: RepoIndexCoverage;
+  freshnessStrategy?: string;
   files: Record<string, RepoIndexedFileRecord>;
 };
 

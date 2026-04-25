@@ -469,7 +469,12 @@ class SearchExtension:
 
         @mcp.tool(
             name="index_repository",
-            description="Index a source repository now. Re-running is incremental and updates only changed or deleted files.",
+            description=(
+                "Index a source repository now. Supports mode=incremental|force|verify, "
+                "hashMode=metadata-first|hash-changed-candidates|hash-all-candidates, "
+                "and coverage options such as includeDocs, includeGenerated, extraExtensions, "
+                "extraIncludeGlobs, extraExcludeGlobs, and maxFileBytes."
+            ),
             annotations=ToolAnnotations(
                 title="index_repository",
                 readOnlyHint=False,
@@ -478,8 +483,83 @@ class SearchExtension:
                 openWorldHint=False,
             ),
         )
-        async def index_repository(repo_root: str = "") -> str:
-            result = await context.get_auto_indexer().run_index(repo_root or os.getenv("REPO_ROOT", "."), reason="manual")
+        async def index_repository(
+            repo_root: str = "",
+            mode: str = "incremental",
+            hashMode: str = "metadata-first",
+            includeDocs: bool = False,
+            includeGenerated: bool = False,
+            extraExtensions: list[str] | None = None,
+            extraIncludeGlobs: list[str] | None = None,
+            extraExcludeGlobs: list[str] | None = None,
+            maxFileBytes: int = 0,
+        ) -> str:
+            payload: dict[str, object] = {
+                "repoRoot": repo_root or os.getenv("REPO_ROOT", "."),
+                "mode": mode,
+                "hashMode": hashMode,
+                "includeDocs": includeDocs,
+                "includeGenerated": includeGenerated,
+            }
+            if extraExtensions:
+                payload["extraExtensions"] = extraExtensions
+            if extraIncludeGlobs:
+                payload["extraIncludeGlobs"] = extraIncludeGlobs
+            if extraExcludeGlobs:
+                payload["extraExcludeGlobs"] = extraExcludeGlobs
+            if maxFileBytes > 0:
+                payload["maxFileBytes"] = maxFileBytes
+
+            result = await context.get_auto_indexer().run_index(
+                str(payload["repoRoot"]),
+                reason="manual",
+                options=payload,
+            )
+            return format_tool_result(result)
+
+        @mcp.tool(
+            name="diagnose_index_repository",
+            description="Diagnose repository index freshness and coverage without updating Qdrant or local lexical artifacts.",
+            annotations=ToolAnnotations(
+                title="diagnose_index_repository",
+                readOnlyHint=True,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=False,
+            ),
+        )
+        async def diagnose_index_repository(
+            repo_root: str = "",
+            hashMode: str = "hash-all-candidates",
+            includeDocs: bool = False,
+            includeGenerated: bool = False,
+            extraExtensions: list[str] | None = None,
+            extraIncludeGlobs: list[str] | None = None,
+            extraExcludeGlobs: list[str] | None = None,
+            maxFileBytes: int = 0,
+        ) -> str:
+            payload: dict[str, object] = {
+                "repoRoot": repo_root or os.getenv("REPO_ROOT", "."),
+                "mode": "verify",
+                "hashMode": hashMode,
+                "includeDocs": includeDocs,
+                "includeGenerated": includeGenerated,
+            }
+            if extraExtensions:
+                payload["extraExtensions"] = extraExtensions
+            if extraIncludeGlobs:
+                payload["extraIncludeGlobs"] = extraIncludeGlobs
+            if extraExcludeGlobs:
+                payload["extraExcludeGlobs"] = extraExcludeGlobs
+            if maxFileBytes > 0:
+                payload["maxFileBytes"] = maxFileBytes
+
+            result = await context.get_auto_indexer().run_index(
+                str(payload["repoRoot"]),
+                reason="diagnose",
+                options=payload,
+                record_result=False,
+            )
             return format_tool_result(result)
 
         @mcp.tool(

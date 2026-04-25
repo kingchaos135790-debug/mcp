@@ -1,4 +1,4 @@
-﻿import { execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getWindowsReservedDeviceExcludeGlobs } from "./windows-path-utils.js";
 const execFileAsync = promisify(execFile);
@@ -79,5 +79,3 @@ export async function queryRipgrep(repoRoot, query, limit, metadata = {}, caseMo
         throw new Error(error?.stderr || error?.message || "ripgrep search failed");
     }
 }
-
-
