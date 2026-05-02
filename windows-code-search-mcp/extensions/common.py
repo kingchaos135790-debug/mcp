@@ -56,7 +56,7 @@ def require_vscode_command_success(action: str, result: object) -> dict[str, obj
     if status and status != "ok":
         error = str(result.get("error", "")).strip() or f"{action} failed"
         guidance = (
-            "Re-read with get_vscode_file_range, retry with fresh expected_text, and confirm the VS Code session is active and polling."
+            "Re-read with get_file_range, retry with fresh expected_text, and confirm the target file has not drifted."
         )
         normalized_error = error.lower()
         if (
@@ -66,15 +66,15 @@ def require_vscode_command_success(action: str, result: object) -> dict[str, obj
             or ("edit target" in normalized_error and "drift" in normalized_error)
         ):
             guidance = (
-                "Re-read the exact range with get_vscode_file_range, retry with fresh expected_text, and consider a narrower edit, a smaller anchored change, or safe_vscode_edit."
+                "Re-read the exact range with get_file_range, retry with fresh expected_text, and consider a narrower edit, anchored_file_edit, or multi_anchor_file_edit."
             )
         elif "resource not found" in normalized_error:
             guidance = (
-                "Refresh the available tool paths, prefer the canonical /Windows MCP/... path, and retry after confirming the VS Code session is still active."
+                "Refresh the available tool paths, prefer the canonical /Windows MCP/... path, and retry after confirming the direct file edit tools are available."
             )
         elif "outside the vs code workspace root" in normalized_error:
             guidance = (
-                "Use FileSystem or PowerShell for files outside the active workspace, or switch to a VS Code session rooted at the target repo before retrying."
+                "Use a repo_root or an absolute file_path for files outside the current working directory before retrying."
             )
         raise RuntimeError(f"{action} failed: {error}. {guidance}")
     return result

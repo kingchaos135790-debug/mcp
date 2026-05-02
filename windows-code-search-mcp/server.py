@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import atexit
 import click
@@ -14,8 +14,8 @@ import fastmcp
 import bootstrap  # noqa: F401
 
 from server_app import ServerApp
-from server_config import SEARCH_TOOL_NAMES, Transport, VSCODE_TOOL_NAMES, build_config, parse_bool
-from server_extensions import SearchExtension, VSCodeBridgeExtension, WindowsDesktopExtension
+from server_config import FILE_EDIT_TOOL_NAMES, SEARCH_TOOL_NAMES, Transport, build_config, parse_bool
+from server_extensions import FileEditExtension, SearchExtension, WindowsDesktopExtension
 from session_context import get_current_boot_id, get_current_chat_session_id, normalize_chat_session_id, set_current_boot_id
 
 LOGGER = logging.getLogger(__name__)
@@ -147,7 +147,7 @@ def create_server_app(host: str, port: int) -> ServerApp:
     config = build_config(host, port)
     if config.mode not in {"", "local"}:
         raise ValueError("Only MODE=local is supported by windows-code-search-mcp")
-    return ServerApp(config, [SearchExtension(), VSCodeBridgeExtension(), WindowsDesktopExtension()])
+    return ServerApp(config, [SearchExtension(), FileEditExtension(), WindowsDesktopExtension()])
 
 
 def configure_http_runtime(transport: str, host: str, port: int) -> None:
@@ -256,10 +256,8 @@ def main(transport: str, host: str, port: int) -> None:
         print(f"[INFO] Streamable HTTP path : {fastmcp.settings.streamable_http_path}")
         print(f"[INFO] Streamable HTTP stateless : {fastmcp.settings.stateless_http}")
     print("[INFO] Search tools : " + ", ".join(SEARCH_TOOL_NAMES))
-    print("[INFO] VS Code tools : " + ", ".join(VSCODE_TOOL_NAMES))
+    print("[INFO] File edit tools : " + ", ".join(FILE_EDIT_TOOL_NAMES))
     print(f"[INFO] Auto-index config : {app.config.managed_repositories_path}")
-    if app.config.vscode_bridge_enabled:
-        print(f"[INFO] VS Code bridge : http://{app.config.vscode_bridge_host}:{app.config.vscode_bridge_port}")
 
     match transport:
         case Transport.STDIO.value:

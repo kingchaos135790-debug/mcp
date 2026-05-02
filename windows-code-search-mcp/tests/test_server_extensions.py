@@ -53,33 +53,33 @@ class ServerExtensionsTests(unittest.TestCase):
     def test_require_vscode_command_success_returns_ok_result(self) -> None:
         result = {"status": "ok", "payload": {"applied": True}}
 
-        self.assertEqual(require_vscode_command_success("request_vscode_edit", result), result)
+        self.assertEqual(require_vscode_command_success("request_file_edit", result), result)
 
     def test_require_vscode_command_success_raises_with_recovery_hint(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "narrower edit"):
             require_vscode_command_success(
-                "request_vscode_edit",
+                "request_file_edit",
                 {"status": "error", "error": "Expected text mismatch before applying edit."},
             )
 
     def test_require_vscode_command_success_raises_with_drift_recovery_hint(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "narrower edit"):
             require_vscode_command_success(
-                "request_vscode_edit",
+                "request_file_edit",
                 {"status": "error", "error": "Could not reliably locate edit target after drift."},
             )
 
     def test_require_vscode_command_success_raises_with_resource_path_hint(self) -> None:
         with self.assertRaisesRegex(RuntimeError, r"/Windows MCP/"):
             require_vscode_command_success(
-                "request_vscode_edit",
+                "request_file_edit",
                 {"status": "error", "error": "Resource not found"},
             )
 
     def test_require_vscode_command_success_raises_with_workspace_root_hint(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "outside the active workspace"):
+        with self.assertRaisesRegex(RuntimeError, "repo_root or an absolute file_path"):
             require_vscode_command_success(
-                "get_vscode_file_range",
+                "get_file_range",
                 {"status": "error", "error": "File path is outside the VS Code workspace root"},
             )
 

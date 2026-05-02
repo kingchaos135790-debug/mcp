@@ -16,11 +16,9 @@ from extensions.common import (
     session_bound_tool,
 )
 from extensions.desktop import WindowsDesktopExtension
+from extensions.file_edits import FileEditExtension
 from extensions.search import SearchExtension
-from extensions.vscode_edits import VSCodeEditExtension
-from extensions.vscode_sessions import VSCodeSessionExtension
 from server_runtime import ServerContext
-from server_vscode_bridge import VSCodeBridgeServer
 
 
 class ServerExtension(Protocol):
@@ -31,32 +29,10 @@ class ServerExtension(Protocol):
     async def stop(self, context: ServerContext) -> None: ...
 
 
-class VSCodeBridgeExtension:
-    def __init__(self) -> None:
-        self._session_extension = VSCodeSessionExtension()
-        self._edit_extension = VSCodeEditExtension()
-
-    def register(self, mcp: FastMCP, context: ServerContext) -> None:
-        self._session_extension.register(mcp, context)
-        self._edit_extension.register(mcp, context)
-
-    async def start(self, context: ServerContext) -> None:
-        bridge = VSCodeBridgeServer(context.config)
-        if bridge.enabled:
-            bridge.start()
-        context.vscode_bridge = bridge
-
-    async def stop(self, context: ServerContext) -> None:
-        bridge = context.vscode_bridge
-        if isinstance(bridge, VSCodeBridgeServer):
-            bridge.stop()
-        context.vscode_bridge = None
-
-
 __all__ = [
     "ServerExtension",
     "SearchExtension",
-    "VSCodeBridgeExtension",
+    "FileEditExtension",
     "WindowsDesktopExtension",
     "bind_chat_session",
     "format_tool_result",

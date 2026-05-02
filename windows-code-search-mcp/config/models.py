@@ -18,25 +18,13 @@ SEARCH_TOOL_NAMES = [
     "remove_auto_index_repository",
 ]
 
-VSCODE_TOOL_NAMES = [
-    "create_vscode_session",
-    "close_vscode_session",
-    "list_vscode_sessions",
-    "get_vscode_session",
-    "get_vscode_context",
-    "get_vscode_context_summary",
-    "get_vscode_file_range",
-    "get_vscode_diagnostics",
+FILE_EDIT_TOOL_NAMES = [
     "get_file_range",
     "get_multiple_file_ranges",
-    "request_vscode_edit",
-    "request_vscode_workspace_edit",
-    "safe_vscode_edit",
-    "anchored_vscode_edit",
     "request_file_edit",
     "safe_file_edit",
     "anchored_file_edit",
-    "open_vscode_file",
+    "multi_anchor_file_edit",
 ]
 
 

@@ -12,7 +12,7 @@ from config.managed_repositories import (
 )
 from config.models import (
     SEARCH_TOOL_NAMES,
-    VSCODE_TOOL_NAMES,
+    FILE_EDIT_TOOL_NAMES,
     Config,
     ManagedRepository,
     Transport,
@@ -25,7 +25,7 @@ from config.oauth_state import (
 
 __all__ = [
     "SEARCH_TOOL_NAMES",
-    "VSCODE_TOOL_NAMES",
+    "FILE_EDIT_TOOL_NAMES",
     "Config",
     "ManagedRepository",
     "Transport",
