@@ -369,12 +369,30 @@ class Desktop:
         return apps
 
     def execute_command(self, command: str, timeout: int = 10) -> tuple[str, int]:
+        def _decode_pipe(value) -> str:
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return value or ""
+
+        def _max_output_chars() -> int:
+            try:
+                return max(1_000, int(os.getenv("WINDOWS_MCP_SHELL_MAX_CHARS", "60000")))
+            except ValueError:
+                return 60_000
+
+        def _clamp_output(value: str) -> str:
+            max_chars = _max_output_chars()
+            if len(value) <= max_chars:
+                return value
+            omitted = len(value) - max_chars
+            return f"{value[:max_chars]}\n\n[PowerShell output truncated: {omitted} characters omitted]"
+
         try:
-            # $OutputEncoding: controls how PS5.1 encodes output written to its stdout pipe.
-            # Without this set to UTF-8, PS5.1 uses the system codepage and native process
-            # stdout is silently lost when Python reads the pipe.
-            # [Console]::OutputEncoding: controls how PS decodes bytes from native exe stdout.
+            # $OutputEncoding controls how PS5.1 encodes output written to its stdout pipe.
+            # [Console]::OutputEncoding controls how PowerShell decodes native executable stdout.
+            # EncodedCommand avoids nested quote escaping bugs in complex one-line commands.
             utf8_command = (
+                "$ProgressPreference = 'SilentlyContinue'; "
                 "$OutputEncoding = [System.Text.Encoding]::UTF8; "
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
                 f"{command}"
@@ -407,10 +425,9 @@ class Desktop:
                 if ".EXE" not in env.get("PATHEXT", ""):
                     env["PATHEXT"] = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL;.PY;.PYW"
 
-            shell = "pwsh" if shutil.which("pwsh") else "powershell"
+            shell = "pwsh" if shutil.which("pwsh", path=env.get("PATH")) else "powershell"
 
-            args = [shell, "-NoProfile"]
-            # Only older Windows PowerShell (5.1) uses -OutputFormat Text successfully here
+            args = [shell, "-NoProfile", "-NonInteractive"]
             shell_name = os.path.basename(shell).lower().replace(".exe", "")
             if shell_name == "powershell":
                 args.extend(["-OutputFormat", "Text"])
@@ -418,21 +435,31 @@ class Desktop:
 
             result = subprocess.run(
                 args,
-                capture_output=True,  # No errors='ignore' - let subprocess return bytes
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 timeout=timeout,
-                cwd=os.path.expanduser(path="~"),
+                cwd=os.path.expanduser("~"),
                 env=env,
             )
-            # Handle both bytes and str output (subprocess behavior varies by environment)
-            stdout = result.stdout
-            stderr = result.stderr
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode("utf-8", errors="replace")
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode("utf-8", errors="replace")
-            return (stdout or stderr, result.returncode)
+
+            stdout = _decode_pipe(result.stdout)
+            stderr = _decode_pipe(result.stderr)
+            output = stdout
+            if stderr:
+                output = f"{stdout}\n[stderr]\n{stderr}" if stdout else stderr
+            if not output.strip():
+                output = f"[no output] exit code {result.returncode}"
+
+            logger.debug(
+                "PowerShell command completed: exit=%s stdout_chars=%s stderr_chars=%s returned_chars=%s",
+                result.returncode,
+                len(stdout),
+                len(stderr),
+                min(len(output), _max_output_chars()),
+            )
+            return (_clamp_output(output), result.returncode)
         except subprocess.TimeoutExpired:
-            return ("Command execution timed out", 1)
+            return (f"Command execution timed out after {timeout} seconds", 1)
         except Exception as e:
             return (f"Command execution failed: {type(e).__name__}: {e}", 1)
 
