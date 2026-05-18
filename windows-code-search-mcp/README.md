@@ -74,6 +74,8 @@ Search result normalization:
 - `semantic_code_search`, `lexical_code_search`, and `hybrid_code_search` add a normalized `filePath` and `snippet` when available
 - when the underlying engine provides location data, normalized hits expose it under `location` instead of synthesizing top-level edit-ready line ranges by default
 - lexical hits still preserve their original fields such as `file`, `line`, and `snippet` for backward compatibility
+- `hybrid_code_search` adds an `exact_matches` section for identifier/path/string queries when live lexical hits directly match the query
+- hybrid results include `resultSource` hints such as `semantic_index`, `live_lexical`, or `hybrid_fused`; generated/build-path warnings clarify that semantic index coverage may exclude generated paths while live lexical ripgrep can still return matching files on disk
 - `hybrid_code_search` now applies a wrapper-level rerank to fused hits before returning them, favoring lexical corroboration, exact query phrase matches, identifier-aware feature-token overlap, and source files over generated artifacts such as `out/`, `dist/`, `.map`, and minified outputs; the original engine score remains a final tie-breaker
 - treat search result locations as navigation hints; use `get_file_range` to obtain fresh numbered lines before editing
 

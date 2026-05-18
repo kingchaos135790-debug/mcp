@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import asdict
 import os
@@ -248,6 +248,78 @@ def _path_preference(file_path: str) -> int:
     return 2
 
 
+def _hit_text_parts(item: dict[str, object]) -> tuple[str, str, str]:
+    file_path = _normalize_path(item.get("filePath") or item.get("path") or item.get("file"))
+    symbol = str(item.get("symbol") or "").strip().lower()
+    snippet = str(item.get("snippet") or item.get("text") or item.get("content") or "").strip().lower()
+    return file_path, symbol, snippet
+
+
+def _is_exact_match_hit(query: str, item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    file_path, symbol, snippet = _hit_text_parts(item)
+    exact_query = query.strip().strip("`'\"").lower()
+    identifiers = _identifier_candidates(query)
+    if exact_query and exact_query in (file_path, symbol):
+        return True
+    if exact_query and len(exact_query) >= 3 and exact_query in snippet:
+        return True
+    for identifier in identifiers:
+        if identifier and (identifier == symbol or identifier in snippet or identifier in file_path):
+            return True
+    return False
+
+
+def _extract_exact_matches(query: str, lexical: list[object] | None, limit: int) -> list[object]:
+    if not isinstance(lexical, list):
+        return []
+    exact: list[object] = []
+    seen: set[tuple[str, int, str]] = set()
+    for item in lexical:
+        if not _is_exact_match_hit(query, item):
+            continue
+        assert isinstance(item, dict)
+        file_path = _normalize_path(item.get("filePath") or item.get("path") or item.get("file"))
+        line = int(item.get("line") or 0)
+        snippet = str(item.get("snippet") or item.get("text") or item.get("content") or "")
+        key = (file_path, line, snippet)
+        if key in seen:
+            continue
+        seen.add(key)
+        tagged = dict(item)
+        tagged.setdefault("matchKind", "exact_lexical")
+        tagged.setdefault("resultSource", "live_lexical" if str(tagged.get("backend") or "").lower() == "ripgrep" else "lexical_index")
+        exact.append(tagged)
+    return exact[:limit]
+
+
+def _annotate_result_sources(items: object, source: str) -> None:
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if isinstance(item, dict):
+            item.setdefault("resultSource", source)
+
+
+def _clarify_generated_path_warnings(result: dict[str, object]) -> None:
+    status = result.get("status")
+    if not isinstance(status, dict):
+        return
+    warnings = status.get("warnings")
+    if not isinstance(warnings, list):
+        return
+    clarified: list[object] = []
+    for warning in warnings:
+        text = str(warning)
+        clarified.append(warning)
+        if "generated or build output" in text and "lexical ripgrep" not in text.lower():
+            clarified.append(
+                "Semantic index coverage may exclude generated/build paths, but live lexical ripgrep results can still include generated files present on disk; check each hit's resultSource."
+            )
+    status["warnings"] = clarified
+
+
 def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | None, limit: int) -> list[object]:
     lexical_paths: set[str] = set()
     lexical_basenames: set[str] = set()
@@ -425,9 +497,14 @@ class SearchExtension:
                     candidate_limit,
                     lexical if isinstance(lexical, list) else None,
                 )
+                _annotate_result_sources(result.get("semantic"), "semantic_index")
+                _annotate_result_sources(lexical_hits, "live_lexical")
                 result["lexical"] = lexical_hits
+                result["exact_matches"] = _extract_exact_matches(query, lexical_hits, limit)
+                _clarify_generated_path_warnings(result)
                 if isinstance(fused, list) and fused:
                     result["fused"] = _rerank_fused_hits(query, fused, lexical_hits, limit)
+                    _annotate_result_sources(result["fused"], "hybrid_fused")
             return format_tool_result(result)
 
         @mcp.tool(
@@ -636,4 +713,5 @@ class SearchExtension:
 
     async def stop(self, context: ServerContext) -> None:
         return None
+
 

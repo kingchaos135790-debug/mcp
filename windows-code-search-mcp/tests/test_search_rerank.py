@@ -1,4 +1,4 @@
-﻿import importlib.util
+import importlib.util
 import sys
 import types
 import unittest
@@ -46,6 +46,8 @@ spec.loader.exec_module(search_module)
 _is_generated_path = search_module._is_generated_path
 _identifier_candidates = search_module._identifier_candidates
 _rerank_fused_hits = search_module._rerank_fused_hits
+_extract_exact_matches = search_module._extract_exact_matches
+_clarify_generated_path_warnings = search_module._clarify_generated_path_warnings
 
 
 class SearchRerankTests(unittest.TestCase):
@@ -199,6 +201,43 @@ class SearchRerankTests(unittest.TestCase):
         reranked = _rerank_fused_hits("create_vscode_session", fused, lexical, limit=5)
 
         self.assertEqual([item["filePath"] for item in reranked], ["extensions/vscode_sessions.py"])
+
+
+    def test_extract_exact_matches_returns_separate_live_lexical_section(self) -> None:
+        lexical = [
+            {
+                "backend": "ripgrep",
+                "filePath": "extensions/search.py",
+                "line": 413,
+                "text": 'def hybrid_code_search(query: str, limit: int = 8, repo: str = "") -> str:',
+            },
+            {
+                "backend": "ripgrep",
+                "filePath": "README.md",
+                "line": 1,
+                "text": "unrelated",
+            },
+        ]
+
+        exact = _extract_exact_matches("hybrid_code_search", lexical, limit=5)
+
+        self.assertEqual(len(exact), 1)
+        self.assertEqual(exact[0]["filePath"], "extensions/search.py")
+        self.assertEqual(exact[0]["matchKind"], "exact_lexical")
+        self.assertEqual(exact[0]["resultSource"], "live_lexical")
+
+    def test_generated_path_warning_explains_semantic_vs_live_lexical_coverage(self) -> None:
+        payload = {
+            "status": {
+                "warnings": [
+                    "Query appears to target generated or build output, but generated/build paths are excluded from indexed coverage for one or more selected repositories."
+                ]
+            }
+        }
+
+        _clarify_generated_path_warnings(payload)
+
+        self.assertIn("live lexical ripgrep", payload["status"]["warnings"][1])
 
     def test_exact_identifier_queries_drop_config_and_refactor_residue_when_definition_exists(self) -> None:
         fused = [
