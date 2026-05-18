@@ -100,6 +100,16 @@ Recommended tool selection:
 | Replace one guarded range using text, anchors, or line coordinates | `replace_range_or_anchor` | chooses the safest supplied strategy, supports `expected_sha256`, and can dry-run before applying |
 | Replace several anchored bodies directly on disk | `multi_anchor_file_edit` | validates all anchor ranges first, then applies the batch |
 
+
+## Workspace summary tools
+
+The server also exposes read-only Git workspace summary tools:
+
+- `workspace_patch_summary` summarizes current Git status, changed files, diff stats, staged changes, and optionally a bounded raw diff.
+- `session_edit_context` returns changed paths and hunk-level suggested `get_file_range` calls so multi-step edit sessions can refresh only the ranges most likely to need verification.
+
+Use these tools after a series of edits or before handoff to report what changed without asking the assistant to manually reconstruct the patch from prior tool calls.
+
 ## Launcher behavior
 
 `launch_windows_code_search_chatgpt_python.bat` now:

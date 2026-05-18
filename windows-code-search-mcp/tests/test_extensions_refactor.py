@@ -55,6 +55,7 @@ sys.modules["server_vscode_bridge"] = server_vscode_bridge
 import extensions.common as common
 import extensions.file_edits as file_edits
 from extensions.file_edits import FileEditExtension
+from extensions.workspace import WorkspaceSummaryExtension
 import server_extensions
 
 sys.modules.pop("server_config", None)
@@ -200,6 +201,56 @@ class CommonHelperTests(unittest.TestCase):
         with patch.object(common, "bind_chat_session", return_value="async-session") as bind_mock:
             self.assertEqual(asyncio.run(sample_tool("")), "async-session")
         bind_mock.assert_called_once_with("")
+
+
+class WorkspaceSummaryExtensionTests(unittest.TestCase):
+    def _git_available(self) -> bool:
+        import shutil
+        return shutil.which("git") is not None
+
+    def _run_git(self, repo: Path, *args: str) -> None:
+        import subprocess
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
+
+    def test_workspace_summary_extension_registers_read_only_tools(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+
+        WorkspaceSummaryExtension().register(mcp, context)
+
+        self.assertEqual(set(mcp.tools), {"workspace_patch_summary", "session_edit_context"})
+        self.assertTrue(mcp.tools["workspace_patch_summary"]["metadata"]["annotations"].readOnlyHint)
+        self.assertTrue(mcp.tools["session_edit_context"]["metadata"]["annotations"].readOnlyHint)
+
+    def test_workspace_patch_summary_and_session_context_report_git_changes(self) -> None:
+        if not self._git_available():
+            self.skipTest("git is not available")
+        mcp = FakeMCP()
+        context = FakeContext()
+        WorkspaceSummaryExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._run_git(repo, "init")
+            self._run_git(repo, "config", "user.email", "test@example.com")
+            self._run_git(repo, "config", "user.name", "Test User")
+            target = repo / "app.py"
+            target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
+            self._run_git(repo, "add", "app.py")
+            self._run_git(repo, "commit", "-m", "initial")
+            target.write_text("alpha\ndelta\ngamma\n", encoding="utf-8", newline="\n")
+
+            summary = json.loads(mcp.tools["workspace_patch_summary"]["func"](repo_root=str(repo)))
+            self.assertEqual(summary["status"], "ok")
+            self.assertTrue(summary["dirty"])
+            self.assertEqual(summary["summary"]["modified"], 1)
+            self.assertEqual(summary["unstagedNameStatus"][0]["path"], "app.py")
+
+            context_payload = json.loads(mcp.tools["session_edit_context"]["func"](repo_root=str(repo), context_lines=2))
+            self.assertEqual(context_payload["status"], "ok")
+            self.assertEqual(context_payload["changedPaths"], ["app.py"])
+            self.assertEqual(context_payload["unstagedFiles"][0]["path"], "app.py")
+            self.assertEqual(context_payload["unstagedFiles"][0]["hunks"][0]["suggested_next_tool_call"]["tool"], "get_file_range")
 
 
 class ExtensionBoundaryTests(unittest.TestCase):

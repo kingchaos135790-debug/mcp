@@ -18,6 +18,7 @@ from extensions.common import (
 from extensions.desktop import WindowsDesktopExtension
 from extensions.file_edits import FileEditExtension
 from extensions.search import SearchExtension
+from extensions.workspace import WorkspaceSummaryExtension
 from server_runtime import ServerContext
 
 
@@ -32,6 +33,7 @@ class ServerExtension(Protocol):
 __all__ = [
     "ServerExtension",
     "SearchExtension",
+    "WorkspaceSummaryExtension",
     "FileEditExtension",
     "WindowsDesktopExtension",
     "bind_chat_session",

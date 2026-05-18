@@ -18,6 +18,12 @@ SEARCH_TOOL_NAMES = [
     "remove_auto_index_repository",
 ]
 
+WORKSPACE_TOOL_NAMES = [
+    "workspace_patch_summary",
+    "session_edit_context",
+]
+
+
 FILE_EDIT_TOOL_NAMES = [
     "get_file_range",
     "get_multiple_file_ranges",

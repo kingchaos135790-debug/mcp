@@ -15,7 +15,17 @@ import bootstrap  # noqa: F401
 
 from server_app import ServerApp
 from server_config import FILE_EDIT_TOOL_NAMES, SEARCH_TOOL_NAMES, Transport, build_config, parse_bool
+
+try:
+    from server_config import WORKSPACE_TOOL_NAMES
+except ImportError:  # Compatibility with tests that stub server_config.
+    WORKSPACE_TOOL_NAMES: list[str] = []
 from server_extensions import FileEditExtension, SearchExtension, WindowsDesktopExtension
+
+try:
+    from server_extensions import WorkspaceSummaryExtension
+except ImportError:  # Compatibility with tests that stub server_extensions.
+    WorkspaceSummaryExtension = None  # type: ignore[assignment]
 from session_context import get_current_boot_id, get_current_chat_session_id, normalize_chat_session_id, set_current_boot_id
 
 LOGGER = logging.getLogger(__name__)
@@ -147,7 +157,11 @@ def create_server_app(host: str, port: int) -> ServerApp:
     config = build_config(host, port)
     if config.mode not in {"", "local"}:
         raise ValueError("Only MODE=local is supported by windows-code-search-mcp")
-    return ServerApp(config, [SearchExtension(), FileEditExtension(), WindowsDesktopExtension()])
+    extensions = [SearchExtension(), FileEditExtension()]
+    if WorkspaceSummaryExtension is not None:
+        extensions.append(WorkspaceSummaryExtension())
+    extensions.append(WindowsDesktopExtension())
+    return ServerApp(config, extensions)
 
 
 def configure_http_runtime(transport: str, host: str, port: int) -> None:
@@ -257,6 +271,7 @@ def main(transport: str, host: str, port: int) -> None:
         print(f"[INFO] Streamable HTTP stateless : {fastmcp.settings.stateless_http}")
     print("[INFO] Search tools : " + ", ".join(SEARCH_TOOL_NAMES))
     print("[INFO] File edit tools : " + ", ".join(FILE_EDIT_TOOL_NAMES))
+    print("[INFO] Workspace tools : " + ", ".join(WORKSPACE_TOOL_NAMES))
     print(f"[INFO] Auto-index config : {app.config.managed_repositories_path}")
 
     match transport:
