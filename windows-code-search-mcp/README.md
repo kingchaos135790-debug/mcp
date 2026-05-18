@@ -49,6 +49,7 @@ MCP tools exposed for direct file inspection and edits:
 - `request_file_edit`
 - `safe_file_edit`
 - `anchored_file_edit`
+- `replace_range_or_anchor`
 - `multi_anchor_file_edit`
 
 Operational notes:
@@ -57,7 +58,8 @@ Operational notes:
 - Treat search hits, old line numbers, and earlier file reads as navigation hints only. Re-read exact numbered lines with `get_file_range` or `get_multiple_file_ranges` immediately before each write.
 - Use `request_file_edit` for one exact direct-on-disk range edit and include `expected_text` by default so drift is detected instead of silently overwriting another change.
 - Use `safe_file_edit` for one exact direct-on-disk text replacement when the target text is unique in the selected range.
-- Use `anchored_file_edit` for one body replacement between exact start/end anchor lines.
+- Use `anchored_file_edit` for one body replacement between exact start/end anchor lines; failed anchor matches return nearby candidate lines and a suggested next `get_file_range` call.
+- Use `replace_range_or_anchor` when you want one guarded replacement tool that can choose exact text, anchors, or line range. It accepts `expected_sha256` from `get_file_range`/`get_multiple_file_ranges` and supports `dry_run`.
 - Use `multi_anchor_file_edit` for one logical change that replaces several anchored bodies in one validated request. Each edit item accepts `filePath`/`file_path`, `startAnchor`/`start_anchor`, `endAnchor`/`end_anchor`, `replacementText`/`replacement_text`, optional `expectedBody`/`expected_body`, and optional line-window fields.
 - Multi-anchor edits are resolved and validated before any file is written. Overlapping anchored ranges in the same file are rejected.
 - After any successful edit, re-read the affected range before issuing the next write from the same chat.
@@ -78,11 +80,11 @@ Search result normalization:
 ### Direct edit workflow
 
 1. Read the exact numbered lines you plan to change with `get_file_range`, or read several files with `get_multiple_file_ranges`.
-2. For one contiguous patch, call `request_file_edit` with fresh `expected_text`.
-3. For one exact unique text replacement, call `safe_file_edit`.
-4. For one anchored body replacement, call `anchored_file_edit`; `start_anchor` and `end_anchor` must match full line text exactly.
+2. For one contiguous patch, call `request_file_edit` with fresh `expected_text`, or call `replace_range_or_anchor` with line-range fields plus `expected_sha256` for a compact guarded edit.
+3. For one exact unique text replacement, call `safe_file_edit`, or use `replace_range_or_anchor` with `expected_text`.
+4. For one anchored body replacement, call `anchored_file_edit`; `start_anchor` and `end_anchor` must match full line text exactly. Use `replace_range_or_anchor` with `dry_run=true` to inspect the matched range before applying.
 5. For several anchored body replacements, send one `multi_anchor_file_edit` payload and include `expectedBody` for each changed body when available.
-6. If another chat changes the file and causes drift, re-read only the failed range, refresh expected text/body, and retry the narrowest safe edit.
+6. If another chat changes the file and causes drift, re-read only the failed range, refresh expected text/body/hash, and retry the narrowest safe edit.
 
 Recommended tool selection:
 
@@ -92,7 +94,8 @@ Recommended tool selection:
 | Read several direct-on-disk files before coordinated edits | `get_multiple_file_ranges` | returns fresh numbered lines for multiple files from one request |
 | Replace one exact range directly on disk | `request_file_edit` | applies one validated line-and-column edit |
 | Replace one exact text match directly on disk | `safe_file_edit` | derives exact coordinates from one live on-disk match and validates the replacement |
-| Replace one anchored body directly on disk | `anchored_file_edit` | replaces the body between exact start and end anchor lines |
+| Replace one anchored body directly on disk | `anchored_file_edit` | replaces the body between exact start and end anchor lines and reports close-match diagnostics on anchor failure |
+| Replace one guarded range using text, anchors, or line coordinates | `replace_range_or_anchor` | chooses the safest supplied strategy, supports `expected_sha256`, and can dry-run before applying |
 | Replace several anchored bodies directly on disk | `multi_anchor_file_edit` | validates all anchor ranges first, then applies the batch |
 
 ## Launcher behavior

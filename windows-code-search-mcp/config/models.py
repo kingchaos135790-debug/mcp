@@ -24,6 +24,7 @@ FILE_EDIT_TOOL_NAMES = [
     "request_file_edit",
     "safe_file_edit",
     "anchored_file_edit",
+    "replace_range_or_anchor",
     "multi_anchor_file_edit",
 ]
 

@@ -223,6 +223,7 @@ class ExtensionBoundaryTests(unittest.TestCase):
                 "request_file_edit",
                 "safe_file_edit",
                 "anchored_file_edit",
+                "replace_range_or_anchor",
                 "multi_anchor_file_edit",
             },
         )
@@ -230,6 +231,7 @@ class ExtensionBoundaryTests(unittest.TestCase):
         self.assertTrue(mcp.tools["get_multiple_file_ranges"]["metadata"]["annotations"].readOnlyHint)
         self.assertFalse(mcp.tools["safe_file_edit"]["metadata"]["annotations"].readOnlyHint)
         self.assertFalse(mcp.tools["anchored_file_edit"]["metadata"]["annotations"].readOnlyHint)
+        self.assertFalse(mcp.tools["replace_range_or_anchor"]["metadata"]["annotations"].readOnlyHint)
         self.assertFalse(mcp.tools["multi_anchor_file_edit"]["metadata"]["annotations"].readOnlyHint)
 
 
@@ -374,6 +376,105 @@ class FileEditExtensionTests(unittest.TestCase):
             self.assertEqual(payload["modifiedFile"]["lines"][2]["lineNumber"], 3)
             self.assertEqual(payload["modifiedFile"]["lines"][2]["text"], "updated")
             self.assertEqual(target.read_text(encoding="utf-8"), "before\n<start>\nupdated\n<end>\nafter\n")
+
+    def test_get_file_range_includes_content_sha256_guard(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        FileEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("alpha\nbeta\n", encoding="utf-8", newline="\n")
+            payload = json.loads(mcp.tools["get_file_range"]["func"](file_path=str(target), start_line=1, end_line=2))
+            self.assertEqual(len(payload["contentSha256"]), 64)
+            self.assertIn("expected_sha256", payload["expectedSha256Hint"])
+
+    def test_replace_range_or_anchor_uses_hash_guard_for_line_range(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        FileEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
+            selected = json.loads(mcp.tools["get_file_range"]["func"](file_path=str(target), start_line=2, end_line=2))
+            result = mcp.tools["replace_range_or_anchor"]["func"](
+                file_path=str(target),
+                start_line=2,
+                start_column=1,
+                end_line=2,
+                end_column=5,
+                replacement_text="delta",
+                expected_sha256=selected["contentSha256"],
+            )
+            payload = json.loads(result)
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["strategy"], "line_range")
+            self.assertEqual(target.read_text(encoding="utf-8"), "alpha\ndelta\ngamma\n")
+
+    def test_replace_range_or_anchor_dry_run_does_not_write(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        FileEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("start\nlive\nend\n", encoding="utf-8", newline="\n")
+            result = mcp.tools["replace_range_or_anchor"]["func"](
+                file_path=str(target),
+                start_anchor="start",
+                end_anchor="end",
+                replacement_text="updated\n",
+                dry_run=True,
+            )
+            payload = json.loads(result)
+            self.assertTrue(payload["dryRun"])
+            self.assertFalse(payload["applied"])
+            self.assertEqual(payload["strategy"], "anchor")
+            self.assertEqual(target.read_text(encoding="utf-8"), "start\nlive\nend\n")
+
+    def test_replace_range_or_anchor_reports_hash_mismatch_with_next_call(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        FileEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("alpha\nbeta\n", encoding="utf-8", newline="\n")
+            result = mcp.tools["replace_range_or_anchor"]["func"](
+                file_path=str(target),
+                start_line=2,
+                start_column=1,
+                end_line=2,
+                end_column=5,
+                replacement_text="delta",
+                expected_sha256="0" * 64,
+            )
+            payload = json.loads(result)
+            self.assertEqual(payload["status"], "error")
+            self.assertEqual(payload["suggested_next_tool_call"]["tool"], "get_file_range")
+            self.assertEqual(target.read_text(encoding="utf-8"), "alpha\nbeta\n")
+
+    def test_anchored_file_edit_failure_returns_close_match_diagnostics(self) -> None:
+        mcp = FakeMCP()
+        context = FakeContext()
+        FileEditExtension().register(mcp, context)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "app.py"
+            target.write_text("start\nlive\nend corrected\n", encoding="utf-8", newline="\n")
+            result = mcp.tools["anchored_file_edit"]["func"](
+                file_path=str(target),
+                start_anchor="start",
+                end_anchor="end correctd",
+                replacement_text="updated\n",
+            )
+            payload = json.loads(result)
+            self.assertEqual(payload["status"], "error")
+            self.assertTrue(payload["anchorDiagnostics"]["startAnchorFound"])
+            self.assertFalse(payload["anchorDiagnostics"]["endAnchorFoundAfterStart"])
+            self.assertEqual(payload["anchorDiagnostics"]["recommendedCorrectedEndAnchor"], "end corrected")
+            self.assertEqual(payload["suggested_next_tool_call"]["tool"], "get_file_range")
 
 
     def test_multi_anchor_file_edit_replaces_multiple_bodies_in_one_request(self) -> None:
