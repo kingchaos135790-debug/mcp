@@ -4,7 +4,13 @@
     {
       "repo_root": "C:\\path\\to\\your\\project",
       "watch": true,
-      "auto_index_on_start": true
+      "auto_index_on_start": true,
+      "include_docs": true,
+      "include_generated": false,
+      "extra_extensions": [],
+      "extra_include_globs": [],
+      "extra_exclude_globs": [],
+      "max_file_bytes": 0
     }
   ]
 }

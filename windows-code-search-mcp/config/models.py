@@ -40,6 +40,12 @@ class ManagedRepository:
     repo_root: str
     watch: bool = True
     auto_index_on_start: bool = True
+    include_docs: bool = False
+    include_generated: bool = False
+    extra_extensions: list[str] = field(default_factory=list)
+    extra_include_globs: list[str] = field(default_factory=list)
+    extra_exclude_globs: list[str] = field(default_factory=list)
+    max_file_bytes: int = 0
     last_indexed_at: str = ""
     last_index_reason: str = ""
     last_result: dict[str, object] = field(default_factory=dict)

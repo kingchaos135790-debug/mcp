@@ -564,8 +564,8 @@ class SearchExtension:
             repo_root: str = "",
             mode: str = "incremental",
             hashMode: str = "metadata-first",
-            includeDocs: bool = False,
-            includeGenerated: bool = False,
+            includeDocs: bool | None = None,
+            includeGenerated: bool | None = None,
             extraExtensions: list[str] | None = None,
             extraIncludeGlobs: list[str] | None = None,
             extraExcludeGlobs: list[str] | None = None,
@@ -575,9 +575,11 @@ class SearchExtension:
                 "repoRoot": repo_root or os.getenv("REPO_ROOT", "."),
                 "mode": mode,
                 "hashMode": hashMode,
-                "includeDocs": includeDocs,
-                "includeGenerated": includeGenerated,
             }
+            if includeDocs is not None:
+                payload["includeDocs"] = includeDocs
+            if includeGenerated is not None:
+                payload["includeGenerated"] = includeGenerated
             if extraExtensions:
                 payload["extraExtensions"] = extraExtensions
             if extraIncludeGlobs:
@@ -608,8 +610,8 @@ class SearchExtension:
         async def diagnose_index_repository(
             repo_root: str = "",
             hashMode: str = "hash-all-candidates",
-            includeDocs: bool = False,
-            includeGenerated: bool = False,
+            includeDocs: bool | None = None,
+            includeGenerated: bool | None = None,
             extraExtensions: list[str] | None = None,
             extraIncludeGlobs: list[str] | None = None,
             extraExcludeGlobs: list[str] | None = None,
@@ -619,9 +621,11 @@ class SearchExtension:
                 "repoRoot": repo_root or os.getenv("REPO_ROOT", "."),
                 "mode": "verify",
                 "hashMode": hashMode,
-                "includeDocs": includeDocs,
-                "includeGenerated": includeGenerated,
             }
+            if includeDocs is not None:
+                payload["includeDocs"] = includeDocs
+            if includeGenerated is not None:
+                payload["includeGenerated"] = includeGenerated
             if extraExtensions:
                 payload["extraExtensions"] = extraExtensions
             if extraIncludeGlobs:
@@ -670,7 +674,7 @@ class SearchExtension:
 
         @mcp.tool(
             name="add_auto_index_repository",
-            description="Add a repository to managed auto-indexing. Optionally index it now and watch for future file changes.",
+            description="Add a repository to managed auto-indexing. Optionally index it now and watch for future file changes. Coverage options are persisted and reused for startup/watch incremental indexing.",
             annotations=ToolAnnotations(
                 title="add_auto_index_repository",
                 readOnlyHint=False,
@@ -684,12 +688,24 @@ class SearchExtension:
             watch: bool = True,
             auto_index_on_start: bool = True,
             index_now: bool = True,
+            includeDocs: bool = False,
+            includeGenerated: bool = False,
+            extraExtensions: list[str] | None = None,
+            extraIncludeGlobs: list[str] | None = None,
+            extraExcludeGlobs: list[str] | None = None,
+            maxFileBytes: int = 0,
         ) -> str:
             result = await context.get_auto_indexer().add_repository(
                 repo_root,
                 watch=watch,
                 auto_index_on_start=auto_index_on_start,
                 index_now=index_now,
+                include_docs=includeDocs,
+                include_generated=includeGenerated,
+                extra_extensions=extraExtensions,
+                extra_include_globs=extraIncludeGlobs,
+                extra_exclude_globs=extraExcludeGlobs,
+                max_file_bytes=maxFileBytes,
             )
             return format_tool_result(result)
 
@@ -713,5 +729,6 @@ class SearchExtension:
 
     async def stop(self, context: ServerContext) -> None:
         return None
+
 
 

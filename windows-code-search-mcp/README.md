@@ -201,12 +201,16 @@ Minimal format:
     {
       "repo_root": "E:\\\\src\\\\repo-one",
       "watch": true,
-      "auto_index_on_start": true
+      "auto_index_on_start": true,
+      "include_docs": true,
+      "include_generated": false
     },
     {
       "repo_root": "E:\\\\src\\\\repo-two",
       "watch": true,
-      "auto_index_on_start": false
+      "auto_index_on_start": false,
+      "extra_extensions": [".json", ".yml"],
+      "extra_exclude_globs": ["**/fixtures/**"]
     }
   ]
 }
@@ -214,11 +218,15 @@ Minimal format:
 
 Notes:
 
-- `repo_root` is required
-- `watch` controls file-watch incremental reindexing
-- `auto_index_on_start` controls startup reindexing
-- `last_*` fields are maintained by the server automatically; you do not need to add them yourself
-- startup and watch-driven index results are written back into `managed-repositories.json`
+- `repo_root` is required.
+- `watch` controls file-watch incremental reindexing.
+- `auto_index_on_start` controls startup reindexing.
+- Managed-repository coverage options are persisted and reused for startup/watch incremental indexing.
+- `include_docs` maps to the engine `includeDocs` option and includes common documentation files such as `.md`, `.mdx`, `.rst`, `.adoc`, and `.txt`.
+- `include_generated`, `extra_extensions`, `extra_include_globs`, `extra_exclude_globs`, and `max_file_bytes` map to the corresponding engine coverage options.
+- A repo-local `.mcp-index.json` can also define coverage defaults; explicit managed-repository options take precedence when present.
+- `last_*` fields are maintained by the server automatically; you do not need to add them yourself.
+- Startup and watch-driven index results are written back into `managed-repositories.json`.
 
 Search/index data locations on this machine:
 

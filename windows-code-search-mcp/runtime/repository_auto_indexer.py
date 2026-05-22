@@ -27,6 +27,43 @@ from runtime.search_engine_bridge import SearchEngineBridge
 logger = logging.getLogger("server_runtime")
 
 
+def _bool_item(item: dict[str, object], snake_name: str, camel_name: str, default: bool) -> bool:
+    value = item.get(snake_name, item.get(camel_name, default))
+    return bool(value)
+
+
+def _list_item(item: dict[str, object], snake_name: str, camel_name: str) -> list[str]:
+    value = item.get(snake_name, item.get(camel_name, []))
+    if not isinstance(value, list):
+        return []
+    return [str(entry) for entry in value if str(entry).strip()]
+
+
+def _int_item(item: dict[str, object], snake_name: str, camel_name: str, default: int = 0) -> int:
+    value = item.get(snake_name, item.get(camel_name, default))
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _repository_index_options(repository: ManagedRepository) -> dict[str, object]:
+    options: dict[str, object] = {
+        "includeDocs": repository.include_docs,
+        "includeGenerated": repository.include_generated,
+    }
+    if repository.extra_extensions:
+        options["extraExtensions"] = repository.extra_extensions
+    if repository.extra_include_globs:
+        options["extraIncludeGlobs"] = repository.extra_include_globs
+    if repository.extra_exclude_globs:
+        options["extraExcludeGlobs"] = repository.extra_exclude_globs
+    if repository.max_file_bytes > 0:
+        options["maxFileBytes"] = repository.max_file_bytes
+    return options
+
+
 class RepositoryAutoIndexer:
     def __init__(self, config: Config, engine: SearchEngineBridge) -> None:
         self.config = config
@@ -113,6 +150,12 @@ class RepositoryAutoIndexer:
                     repo_root=repo_root,
                     watch=bool(item.get("watch", True)),
                     auto_index_on_start=bool(item.get("auto_index_on_start", True)),
+                    include_docs=_bool_item(item, "include_docs", "includeDocs", False),
+                    include_generated=_bool_item(item, "include_generated", "includeGenerated", False),
+                    extra_extensions=_list_item(item, "extra_extensions", "extraExtensions"),
+                    extra_include_globs=_list_item(item, "extra_include_globs", "extraIncludeGlobs"),
+                    extra_exclude_globs=_list_item(item, "extra_exclude_globs", "extraExcludeGlobs"),
+                    max_file_bytes=_int_item(item, "max_file_bytes", "maxFileBytes"),
                     last_indexed_at=str(item.get("last_indexed_at", "")),
                     last_index_reason=str(item.get("last_index_reason", "")),
                     last_result=item.get("last_result", {}) if isinstance(item.get("last_result", {}), dict) else {},
@@ -208,7 +251,12 @@ class RepositoryAutoIndexer:
                 for repo_root in sorted(affected_roots):
                     try:
                         logger.info("Detected file changes in %s; running incremental reindex", repo_root)
-                        await self.run_index(repo_root, reason="watch")
+                        repository = next((item for item in await self.load_repositories() if item.repo_root == repo_root), None)
+                        await self.run_index(
+                            repo_root,
+                            reason="watch",
+                            options=_repository_index_options(repository) if repository is not None else None,
+                        )
                     except Exception:
                         logger.exception("Automatic reindex failed for %s", repo_root)
         except asyncio.CancelledError:
@@ -223,7 +271,11 @@ class RepositoryAutoIndexer:
                 continue
             try:
                 logger.info("Startup auto-indexing %s", repository.repo_root)
-                result = await self.run_index(repository.repo_root, reason="startup")
+                result = await self.run_index(
+                    repository.repo_root,
+                    reason="startup",
+                    options=_repository_index_options(repository),
+                )
                 logger.info(
                     "Startup index complete for %s: %s",
                     repository.repo_root,
@@ -348,6 +400,12 @@ class RepositoryAutoIndexer:
         watch: bool = True,
         auto_index_on_start: bool = True,
         index_now: bool = True,
+        include_docs: bool = False,
+        include_generated: bool = False,
+        extra_extensions: list[str] | None = None,
+        extra_include_globs: list[str] | None = None,
+        extra_exclude_globs: list[str] | None = None,
+        max_file_bytes: int = 0,
     ) -> dict[str, object]:
         normalized = normalize_repo_root(repo_root)
         async with self._config_lock:
@@ -358,11 +416,18 @@ class RepositoryAutoIndexer:
                 repositories.append(existing)
             existing.watch = watch
             existing.auto_index_on_start = auto_index_on_start
+            existing.include_docs = include_docs
+            existing.include_generated = include_generated
+            existing.extra_extensions = list(extra_extensions or [])
+            existing.extra_include_globs = list(extra_include_globs or [])
+            existing.extra_exclude_globs = list(extra_exclude_globs or [])
+            existing.max_file_bytes = max_file_bytes if max_file_bytes > 0 else 0
+            index_options = _repository_index_options(existing)
             await self._save_repositories_unlocked(repositories)
 
         result = None
         if index_now:
-            result = await self.run_index(normalized, reason="add")
+            result = await self.run_index(normalized, reason="add", options=index_options)
 
         await self.restart_watcher()
         return {
@@ -370,6 +435,12 @@ class RepositoryAutoIndexer:
             "watch": watch,
             "autoIndexOnStart": auto_index_on_start,
             "indexedNow": index_now,
+            "includeDocs": include_docs,
+            "includeGenerated": include_generated,
+            "extraExtensions": list(extra_extensions or []),
+            "extraIncludeGlobs": list(extra_include_globs or []),
+            "extraExcludeGlobs": list(extra_exclude_globs or []),
+            "maxFileBytes": max_file_bytes if max_file_bytes > 0 else 0,
             "indexResult": result,
         }
 
