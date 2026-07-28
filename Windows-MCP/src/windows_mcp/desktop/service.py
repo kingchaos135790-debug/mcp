@@ -16,7 +16,7 @@ from typing import Literal
 from markdownify import markdownify
 from fuzzywuzzy import process
 from time import sleep, time, perf_counter
-from psutil import Process
+from psutil import Process, wait_procs
 import win32process
 import subprocess
 import win32gui
@@ -368,6 +368,46 @@ class Desktop:
                     apps[name] = lnk_path
         return apps
 
+    @staticmethod
+    def _kill_process_tree(pid: int) -> None:
+        """Best-effort termination of a process and descendants.
+
+        On Windows, shell children can inherit stdout/stderr pipe handles. Killing only the
+        immediate PowerShell process may leave a descendant holding the pipe open, which can
+        make timeout handling hang while draining output.
+        """
+        if os.name == "nt":
+            try:
+                completed = subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    check=False,
+                )
+                if completed.returncode == 0:
+                    return
+            except Exception:
+                pass
+
+        try:
+            parent = Process(pid)
+            processes = parent.children(recursive=True)
+            processes.append(parent)
+        except Exception:
+            return
+
+        for process in processes:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+        try:
+            wait_procs(processes, timeout=3)
+        except Exception:
+            pass
+
     def execute_command(self, command: str, timeout: int = 10) -> tuple[str, int]:
         def _decode_pipe(value) -> str:
             if isinstance(value, bytes):
@@ -433,31 +473,45 @@ class Desktop:
                 args.extend(["-OutputFormat", "Text"])
             args.extend(["-EncodedCommand", encoded])
 
-            result = subprocess.run(
+            creationflags = 0
+            if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            process = subprocess.Popen(
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=timeout,
                 cwd=os.path.expanduser("~"),
                 env=env,
+                creationflags=creationflags,
             )
 
-            stdout = _decode_pipe(result.stdout)
-            stderr = _decode_pipe(result.stderr)
+            try:
+                stdout_bytes, stderr_bytes = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._kill_process_tree(process.pid)
+                try:
+                    stdout_bytes, stderr_bytes = process.communicate(timeout=1)
+                except subprocess.TimeoutExpired:
+                    stdout_bytes, stderr_bytes = b"", b""
+                return (f"Command execution timed out after {timeout} seconds", 1)
+
+            stdout = _decode_pipe(stdout_bytes)
+            stderr = _decode_pipe(stderr_bytes)
             output = stdout
             if stderr:
                 output = f"{stdout}\n[stderr]\n{stderr}" if stdout else stderr
             if not output.strip():
-                output = f"[no output] exit code {result.returncode}"
+                output = f"[no output] exit code {process.returncode}"
 
             logger.debug(
                 "PowerShell command completed: exit=%s stdout_chars=%s stderr_chars=%s returned_chars=%s",
-                result.returncode,
+                process.returncode,
                 len(stdout),
                 len(stderr),
                 min(len(output), _max_output_chars()),
             )
-            return (_clamp_output(output), result.returncode)
+            return (_clamp_output(output), process.returncode)
         except subprocess.TimeoutExpired:
             return (f"Command execution timed out after {timeout} seconds", 1)
         except Exception as e:
