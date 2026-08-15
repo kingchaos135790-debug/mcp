@@ -451,7 +451,7 @@ class FileEditExtension:
             payload = read_numbered_file_range(resolved, start_line=start_line, end_line=end_line, context_before=context_before, context_after=context_after)
             payload["repoRoot"] = str(Path(repo_root).expanduser().resolve()) if repo_root.strip() else ""
             payload["directFileRead"] = True
-            payload["anchorEditHint"] = "Use this fresh range to derive expected_text for request_file_edit or to confirm stable start_anchor and end_anchor before anchored_file_edit or multi_anchor_file_edit."
+            payload["anchorEditHint"] = "Use this fresh range to derive expected_text, anchors, or expected_sha256 for replace_range_or_anchor."
             _add_block_hash(payload)
             return format_tool_result(payload)
 
@@ -485,71 +485,10 @@ class FileEditExtension:
                 )
                 payload["repoRoot"] = str(Path(item_repo_root).expanduser().resolve()) if item_repo_root.strip() else ""
                 payload["directFileRead"] = True
-                payload["anchorEditHint"] = "Use each fresh range to derive expected_text for request_file_edit or to confirm stable start_anchor and end_anchor before anchored_file_edit or multi_anchor_file_edit."
+                payload["anchorEditHint"] = "Use each fresh range to derive expected_text, anchors, or expected_sha256 for replace_range_or_anchor."
                 _add_block_hash(payload)
                 results.append(payload)
             return format_tool_result({"repoRoot": str(Path(repo_root).expanduser().resolve()) if repo_root.strip() else "", "count": len(results), "files": results, "directFileRead": True})
-
-        @mcp.tool(
-            name="request_file_edit",
-            description="Apply one validated text edit directly to a file on disk using exact line and column ranges.",
-            annotations=ToolAnnotations(title="request_file_edit", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
-        )
-        def request_file_edit(file_path: str = "", start_line: int = 0, start_column: int = 0, end_line: int = 0, end_column: int = 0, new_text: str = "", expected_text: str = "", repo_root: str = "") -> str:
-            return format_tool_result(apply_direct_file_edit(file_path, start_line=start_line, start_column=start_column, end_line=end_line, end_column=end_column, new_text=new_text, expected_text=expected_text, repo_root=repo_root))
-
-        @mcp.tool(
-            name="safe_file_edit",
-            description="Find one exact text match in a file on disk, convert it into a validated range edit, and apply it.",
-            annotations=ToolAnnotations(title="safe_file_edit", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
-        )
-        def safe_file_edit(file_path: str = "", search_text: str = "", replacement_text: str = "", start_line: int = 1, end_line: int = 0, repo_root: str = "") -> str:
-            if not search_text:
-                raise ValueError("search_text is required")
-            resolved = resolve_direct_file_path(file_path, repo_root=repo_root)
-            payload = read_numbered_file_range(resolved, start_line=start_line, end_line=end_line)
-            haystack = normalize_vscode_text(str(payload.get("content", "")))
-            needle = normalize_vscode_text(search_text)
-            match_count = haystack.count(needle)
-            if match_count == 0:
-                raise ValueError("search_text was not found in the requested file range")
-            if match_count > 1:
-                raise ValueError("search_text matched more than once; narrow the line window or provide a more specific anchor")
-            window_start_line = int(payload.get("startLine") or 1)
-            start_offset = haystack.index(needle)
-            end_offset = start_offset + len(needle)
-            match_start_line, match_start_column = offset_to_line_and_column(haystack, start_offset, base_line=window_start_line)
-            match_end_line, match_end_column = offset_to_line_and_column(haystack, end_offset, base_line=window_start_line)
-            result = apply_direct_file_edit(str(resolved), start_line=match_start_line, start_column=match_start_column, end_line=match_end_line, end_column=match_end_column, new_text=replacement_text, expected_text=needle)
-            result.setdefault("safeEdit", True)
-            result.setdefault("matchedText", needle)
-            return format_tool_result(result)
-
-        @mcp.tool(
-            name="anchored_file_edit",
-            description="Find a unique region between exact start and end anchor lines in a file on disk, validate optional expected body text, and replace that body.",
-            annotations=ToolAnnotations(title="anchored_file_edit", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
-        )
-        def anchored_file_edit(file_path: str = "", start_anchor: str = "", end_anchor: str = "", replacement_text: str = "", expected_body: str = "", include_modified_file_with_lines: bool = False, start_line: int = 1, end_line: int = 0, repo_root: str = "") -> str:
-            resolved = resolve_direct_file_path(file_path, repo_root=repo_root)
-            try:
-                resolved_range = _resolve_anchor_range(resolved, start_anchor=start_anchor, end_anchor=end_anchor, expected_body=expected_body, start_line=start_line, end_line=end_line)
-            except ValueError as exc:
-                structured_error = _maybe_return_json_error(exc)
-                if structured_error is not None:
-                    return structured_error
-                raise
-            range_payload = resolved_range["range"]
-            live_body = str(resolved_range["liveBody"])
-            result = apply_direct_file_edit(str(resolved), start_line=int(range_payload["startLine"]), start_column=int(range_payload["startColumn"]), end_line=int(range_payload["endLine"]), end_column=int(range_payload["endColumn"]), new_text=replacement_text, expected_text=live_body)
-            result.setdefault("anchorBasedEdit", True)
-            result.setdefault("matchedBody", live_body)
-            result.setdefault("filePath", str(resolved))
-            result.setdefault("anchors", resolved_range["anchors"])
-            result.setdefault("range", range_payload)
-            if include_modified_file_with_lines and str(result.get("status", "")).lower() == "ok":
-                result["modifiedFile"] = read_numbered_file_range(resolved, start_line=1, end_line=0)
-            return format_tool_result(result)
 
         @mcp.tool(
             name="replace_range_or_anchor",

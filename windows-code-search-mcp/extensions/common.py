@@ -66,7 +66,7 @@ def require_vscode_command_success(action: str, result: object) -> dict[str, obj
             or ("edit target" in normalized_error and "drift" in normalized_error)
         ):
             guidance = (
-                "Re-read the exact range with get_file_range, retry with fresh expected_text, and consider a narrower edit, anchored_file_edit, or multi_anchor_file_edit."
+                "Re-read the exact range with get_file_range, retry with fresh expected_text, and consider a narrower edit using replace_range_or_anchor or multi_anchor_file_edit."
             )
         elif "resource not found" in normalized_error:
             guidance = (

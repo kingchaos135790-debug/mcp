@@ -218,9 +218,8 @@ class WorkspaceSummaryExtensionTests(unittest.TestCase):
 
         WorkspaceSummaryExtension().register(mcp, context)
 
-        self.assertEqual(set(mcp.tools), {"workspace_patch_summary", "session_edit_context"})
+        self.assertEqual(set(mcp.tools), {"workspace_patch_summary"})
         self.assertTrue(mcp.tools["workspace_patch_summary"]["metadata"]["annotations"].readOnlyHint)
-        self.assertTrue(mcp.tools["session_edit_context"]["metadata"]["annotations"].readOnlyHint)
 
     def test_workspace_patch_summary_and_session_context_report_git_changes(self) -> None:
         if not self._git_available():
@@ -246,11 +245,6 @@ class WorkspaceSummaryExtensionTests(unittest.TestCase):
             self.assertEqual(summary["summary"]["modified"], 1)
             self.assertEqual(summary["unstagedNameStatus"][0]["path"], "app.py")
 
-            context_payload = json.loads(mcp.tools["session_edit_context"]["func"](repo_root=str(repo), context_lines=2))
-            self.assertEqual(context_payload["status"], "ok")
-            self.assertEqual(context_payload["changedPaths"], ["app.py"])
-            self.assertEqual(context_payload["unstagedFiles"][0]["path"], "app.py")
-            self.assertEqual(context_payload["unstagedFiles"][0]["hunks"][0]["suggested_next_tool_call"]["tool"], "get_file_range")
 
 
 class ExtensionBoundaryTests(unittest.TestCase):
@@ -271,17 +265,12 @@ class ExtensionBoundaryTests(unittest.TestCase):
             {
                 "get_file_range",
                 "get_multiple_file_ranges",
-                "request_file_edit",
-                "safe_file_edit",
-                "anchored_file_edit",
                 "replace_range_or_anchor",
                 "multi_anchor_file_edit",
             },
         )
         self.assertTrue(mcp.tools["get_file_range"]["metadata"]["annotations"].readOnlyHint)
         self.assertTrue(mcp.tools["get_multiple_file_ranges"]["metadata"]["annotations"].readOnlyHint)
-        self.assertFalse(mcp.tools["safe_file_edit"]["metadata"]["annotations"].readOnlyHint)
-        self.assertFalse(mcp.tools["anchored_file_edit"]["metadata"]["annotations"].readOnlyHint)
         self.assertFalse(mcp.tools["replace_range_or_anchor"]["metadata"]["annotations"].readOnlyHint)
         self.assertFalse(mcp.tools["multi_anchor_file_edit"]["metadata"]["annotations"].readOnlyHint)
 
@@ -294,31 +283,6 @@ class FileEditExtensionTests(unittest.TestCase):
                 start_anchor="start",
                 end_anchor="end",
             )
-
-    def test_anchored_file_edit_can_include_modified_file_with_numbered_lines(self) -> None:
-        mcp = FakeMCP()
-        context = FakeContext()
-        FileEditExtension().register(mcp, context)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            target = Path(tmpdir) / "app.py"
-            target.write_text("start\nlive\nend\n", encoding="utf-8", newline="\n")
-            result = mcp.tools["anchored_file_edit"]["func"](
-                file_path=str(target),
-                start_anchor="start",
-                end_anchor="end",
-                replacement_text="updated\n",
-                expected_body="live\n",
-                include_modified_file_with_lines=True,
-            )
-
-            payload = json.loads(result)
-            self.assertEqual(payload["status"], "ok")
-            self.assertTrue(payload["anchorBasedEdit"])
-            self.assertEqual(payload["modifiedFile"]["content"], "start\nupdated\nend")
-            self.assertEqual(payload["modifiedFile"]["lines"][1]["lineNumber"], 2)
-            self.assertEqual(payload["modifiedFile"]["lines"][1]["text"], "updated")
-            self.assertEqual(target.read_text(encoding="utf-8"), "start\nupdated\nend\n")
 
     def test_get_file_range_reads_numbered_lines_without_vscode(self) -> None:
         mcp = FakeMCP()
@@ -340,7 +304,7 @@ class FileEditExtensionTests(unittest.TestCase):
             self.assertEqual(payload["endLine"], 2)
             self.assertEqual(payload["content"], "alpha\nbeta")
             self.assertEqual(payload["lines"][1]["text"], "beta")
-            self.assertIn("anchored_file_edit", payload["anchorEditHint"])
+            self.assertIn("replace_range_or_anchor", payload["anchorEditHint"])
 
     def test_get_multiple_file_ranges_reads_multiple_files_without_vscode(self) -> None:
         mcp = FakeMCP()
@@ -367,7 +331,7 @@ class FileEditExtensionTests(unittest.TestCase):
             self.assertEqual(payload["files"][1]["startLine"], 1)
             self.assertEqual(payload["files"][1]["endLine"], 3)
 
-    def test_request_file_edit_applies_validated_direct_disk_edit(self) -> None:
+    def test_replace_range_or_anchor_applies_single_unique_expected_text_match(self) -> None:
         mcp = FakeMCP()
         context = FakeContext()
         FileEditExtension().register(mcp, context)
@@ -375,37 +339,17 @@ class FileEditExtensionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir) / "app.py"
             target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
-            result = mcp.tools["request_file_edit"]["func"](
+            result = mcp.tools["replace_range_or_anchor"]["func"](
                 file_path=str(target),
-                start_line=2,
-                start_column=1,
-                end_line=2,
-                end_column=5,
-                new_text="delta",
                 expected_text="beta",
-            )
-            payload = json.loads(result)
-            self.assertEqual(payload["status"], "ok")
-            self.assertEqual(target.read_text(encoding="utf-8"), "alpha\ndelta\ngamma\n")
-
-    def test_safe_file_edit_applies_single_unique_match(self) -> None:
-        mcp = FakeMCP()
-        context = FakeContext()
-        FileEditExtension().register(mcp, context)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            target = Path(tmpdir) / "app.py"
-            target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
-            result = mcp.tools["safe_file_edit"]["func"](
-                file_path=str(target),
-                search_text="beta",
                 replacement_text="delta",
             )
             payload = json.loads(result)
-            self.assertTrue(payload["safeEdit"])
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["strategy"], "expected_text")
             self.assertEqual(target.read_text(encoding="utf-8"), "alpha\ndelta\ngamma\n")
 
-    def test_anchored_file_edit_replaces_body_without_vscode(self) -> None:
+    def test_replace_range_or_anchor_replaces_anchored_body_without_vscode(self) -> None:
         mcp = FakeMCP()
         context = FakeContext()
         FileEditExtension().register(mcp, context)
@@ -413,19 +357,15 @@ class FileEditExtensionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir) / "app.py"
             target.write_text("before\n<start>\nlive\n<end>\nafter\n", encoding="utf-8", newline="\n")
-            result = mcp.tools["anchored_file_edit"]["func"](
+            result = mcp.tools["replace_range_or_anchor"]["func"](
                 file_path=str(target),
                 start_anchor="<start>",
                 end_anchor="<end>",
                 replacement_text="updated\n",
-                expected_body="live\n",
-                include_modified_file_with_lines=True,
             )
             payload = json.loads(result)
-            self.assertTrue(payload["anchorBasedEdit"])
-            self.assertEqual(payload["modifiedFile"]["content"], "before\n<start>\nupdated\n<end>\nafter")
-            self.assertEqual(payload["modifiedFile"]["lines"][2]["lineNumber"], 3)
-            self.assertEqual(payload["modifiedFile"]["lines"][2]["text"], "updated")
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["strategy"], "anchor")
             self.assertEqual(target.read_text(encoding="utf-8"), "before\n<start>\nupdated\n<end>\nafter\n")
 
     def test_get_file_range_includes_content_sha256_guard(self) -> None:
@@ -506,7 +446,7 @@ class FileEditExtensionTests(unittest.TestCase):
             self.assertEqual(payload["suggested_next_tool_call"]["tool"], "get_file_range")
             self.assertEqual(target.read_text(encoding="utf-8"), "alpha\nbeta\n")
 
-    def test_anchored_file_edit_failure_returns_close_match_diagnostics(self) -> None:
+    def test_replace_range_or_anchor_failure_returns_close_match_diagnostics(self) -> None:
         mcp = FakeMCP()
         context = FakeContext()
         FileEditExtension().register(mcp, context)
@@ -514,7 +454,7 @@ class FileEditExtensionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             target = Path(tmpdir) / "app.py"
             target.write_text("start\nlive\nend corrected\n", encoding="utf-8", newline="\n")
-            result = mcp.tools["anchored_file_edit"]["func"](
+            result = mcp.tools["replace_range_or_anchor"]["func"](
                 file_path=str(target),
                 start_anchor="start",
                 end_anchor="end correctd",

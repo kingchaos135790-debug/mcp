@@ -260,14 +260,6 @@ class WorkspaceSummaryExtension:
         def workspace_patch_summary(repo_root: str = "", include_diff: bool = False, max_diff_chars: int = 4000) -> str:
             return format_tool_result(build_workspace_patch_summary(repo_root=repo_root, include_diff=include_diff, max_diff_chars=max_diff_chars))
 
-        @mcp.tool(
-            name="session_edit_context",
-            description="Return changed files and suggested fresh read ranges for a multi-step edit session from the current Git diff.",
-            annotations=ToolAnnotations(title="session_edit_context", readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
-        )
-        def session_edit_context(repo_root: str = "", context_lines: int = 3, max_files: int = 20) -> str:
-            return format_tool_result(build_session_edit_context(repo_root=repo_root, context_lines=context_lines, max_files=max_files))
-
     async def start(self, context: ServerContext) -> None:
         return None
 

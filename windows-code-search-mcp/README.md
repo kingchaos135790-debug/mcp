@@ -40,75 +40,60 @@ This keeps future features isolated from startup/shutdown wiring and avoids addi
 
 ## File editing tools
 
-The server exposes direct-on-disk file editing tools and no longer registers VS Code bridge or VS Code editing tools.
+The server exposes a compact direct-on-disk inspection/edit surface and does not register the older VS Code editing wrappers.
 
 MCP tools exposed for direct file inspection and edits:
 
 - `get_file_range`
 - `get_multiple_file_ranges`
-- `request_file_edit`
-- `safe_file_edit`
-- `anchored_file_edit`
 - `replace_range_or_anchor`
 - `multi_anchor_file_edit`
 
 Operational notes:
 
-- After MCP server restarts, prefer the canonical `/Windows MCP/...` tool paths for follow-up calls. Cached linked tool paths can briefly return `Resource not found` until the tool list refreshes.
 - Treat search hits, old line numbers, and earlier file reads as navigation hints only. Re-read exact numbered lines with `get_file_range` or `get_multiple_file_ranges` immediately before each write.
-- Use `request_file_edit` for one exact direct-on-disk range edit and include `expected_text` by default so drift is detected instead of silently overwriting another change.
-- Use `safe_file_edit` for one exact direct-on-disk text replacement when the target text is unique in the selected range.
-- Use `anchored_file_edit` for one body replacement between exact start/end anchor lines; failed anchor matches return nearby candidate lines and a suggested next `get_file_range` call.
-- Use `replace_range_or_anchor` when you want one guarded replacement tool that can choose exact text, anchors, or line range. It accepts `expected_sha256` from `get_file_range`/`get_multiple_file_ranges` and supports `dry_run`.
-- Use `multi_anchor_file_edit` for one logical change that replaces several anchored bodies in one validated request. Each edit item accepts `filePath`/`file_path`, `startAnchor`/`start_anchor`, `endAnchor`/`end_anchor`, `replacementText`/`replacement_text`, optional `expectedBody`/`expected_body`, and optional line-window fields.
-- Multi-anchor edits are resolved and validated before any file is written. Overlapping anchored ranges in the same file are rejected.
-- After any successful edit, re-read the affected range before issuing the next write from the same chat.
-
-What this enables:
-
-- MCP clients can inspect one or more files directly on disk with numbered lines before issuing validated edits.
-- MCP clients can edit files directly on disk without depending on a VS Code session, bridge process, or editor state.
-- MCP clients can batch multiple anchored body replacements across one or more files with `multi_anchor_file_edit`.
+- Use `replace_range_or_anchor` for normal edits. It supports a unique `expected_text` match, exact start/end anchors, or an explicit line/column range. It also accepts `expected_sha256` from the read tools and supports `dry_run`.
+- Use `multi_anchor_file_edit` for one logical change that replaces several anchored bodies in one validated request. All anchor ranges are resolved before any file is written, and overlapping ranges are rejected.
+- After a successful edit, re-read the affected range before issuing the next dependent write.
 
 Search result normalization:
-- `semantic_code_search`, `lexical_code_search`, and `hybrid_code_search` add a normalized `filePath` and `snippet` when available
-- when the underlying engine provides location data, normalized hits expose it under `location` instead of synthesizing top-level edit-ready line ranges by default
-- lexical hits still preserve their original fields such as `file`, `line`, and `snippet` for backward compatibility
-- `hybrid_code_search` adds an `exact_matches` section for identifier/path/string queries when live lexical hits directly match the query
-- hybrid results include `resultSource` hints such as `semantic_index`, `live_lexical`, or `hybrid_fused`; generated/build-path warnings clarify that semantic index coverage may exclude generated paths while live lexical ripgrep can still return matching files on disk
-- `hybrid_code_search` now applies a wrapper-level rerank to fused hits before returning them, favoring lexical corroboration, exact query phrase matches, identifier-aware feature-token overlap, and source files over generated artifacts such as `out/`, `dist/`, `.map`, and minified outputs; the original engine score remains a final tie-breaker
-- treat search result locations as navigation hints; use `get_file_range` to obtain fresh numbered lines before editing
+
+- `hybrid_code_search` returns normalized `filePath` and `snippet` fields when available.
+- Hybrid search internally combines semantic and lexical search, adds `exact_matches` for strong live lexical matches, and annotates result sources such as `semantic_index`, `live_lexical`, and `hybrid_fused`.
+- Search result locations are navigation hints; use `get_file_range` to obtain fresh numbered lines before editing.
 
 ### Direct edit workflow
 
-1. Read the exact numbered lines you plan to change with `get_file_range`, or read several files with `get_multiple_file_ranges`.
-2. For one contiguous patch, call `request_file_edit` with fresh `expected_text`, or call `replace_range_or_anchor` with line-range fields plus `expected_sha256` for a compact guarded edit.
-3. For one exact unique text replacement, call `safe_file_edit`, or use `replace_range_or_anchor` with `expected_text`.
-4. For one anchored body replacement, call `anchored_file_edit`; `start_anchor` and `end_anchor` must match full line text exactly. Use `replace_range_or_anchor` with `dry_run=true` to inspect the matched range before applying.
-5. For several anchored body replacements, send one `multi_anchor_file_edit` payload and include `expectedBody` for each changed body when available.
-6. If another chat changes the file and causes drift, re-read only the failed range, refresh expected text/body/hash, and retry the narrowest safe edit.
+1. Read the exact numbered lines with `get_file_range`, or read several files with `get_multiple_file_ranges`.
+2. Use `replace_range_or_anchor` with `expected_text`, exact anchors, or line/column coordinates. Prefer `expected_sha256` when a fresh read supplied it.
+3. Use `dry_run=true` when you want to verify the selected anchor/range without writing.
+4. For several anchored replacements, use `multi_anchor_file_edit` and include `expectedBody` for each changed body when available.
 
 Recommended tool selection:
 
 | Goal | Preferred tool | Why |
 | --- | --- | --- |
-| Read one direct-on-disk file before an exact or anchored edit | `get_file_range` | returns fresh numbered lines and file metadata |
-| Read several direct-on-disk files before coordinated edits | `get_multiple_file_ranges` | returns fresh numbered lines for multiple files from one request |
-| Replace one exact range directly on disk | `request_file_edit` | applies one validated line-and-column edit |
-| Replace one exact text match directly on disk | `safe_file_edit` | derives exact coordinates from one live on-disk match and validates the replacement |
-| Replace one anchored body directly on disk | `anchored_file_edit` | replaces the body between exact start and end anchor lines and reports close-match diagnostics on anchor failure |
-| Replace one guarded range using text, anchors, or line coordinates | `replace_range_or_anchor` | chooses the safest supplied strategy, supports `expected_sha256`, and can dry-run before applying |
-| Replace several anchored bodies directly on disk | `multi_anchor_file_edit` | validates all anchor ranges first, then applies the batch |
-
+| Read one file before editing | `get_file_range` | returns fresh numbered lines, metadata, and a content hash |
+| Read several files before coordinated edits | `get_multiple_file_ranges` | batches fresh numbered reads |
+| Replace one guarded range using text, anchors, or coordinates | `replace_range_or_anchor` | consolidates the former single-edit variants and supports hash guards/dry-run |
+| Replace several anchored bodies | `multi_anchor_file_edit` | validates the full batch before writing |
 
 ## Workspace summary tools
 
-The server also exposes read-only Git workspace summary tools:
+The server exposes one read-only Git workspace summary tool:
 
 - `workspace_patch_summary` summarizes current Git status, changed files, diff stats, staged changes, and optionally a bounded raw diff.
-- `session_edit_context` returns changed paths and hunk-level suggested `get_file_range` calls so multi-step edit sessions can refresh only the ranges most likely to need verification.
 
-Use these tools after a series of edits or before handoff to report what changed without asking the assistant to manually reconstruct the patch from prior tool calls.
+Use it after a series of edits or before handoff to report the current patch.
+
+## Windows system tools
+
+Only these Windows-side tools are registered by the integrated server:
+
+- `PowerShell`
+- `FileSystem`
+
+Desktop/UI automation tools such as `Screenshot`, `Snapshot`, `Click`, `Type`, `Scroll`, `Move`, `Shortcut`, `MultiSelect`, `MultiEdit`, `Clipboard`, `Process`, `Notification`, `Registry`, `App`, `Scrape`, and `Wait` are not registered.
 
 ## Launcher behavior
 
@@ -135,117 +120,44 @@ That keeps the TypeScript repository focused on the search/index core instead of
 
 The integrated MCP exposes these search-side tools:
 
-- `semantic_code_search`
-- `lexical_code_search`
 - `hybrid_code_search`
 - `server_health`
 - `list_indexed_repositories`
-- `index_repository`
-- `diagnose_index_repository`
-- `remove_indexed_repository`
-- `list_auto_index_repositories`
-- `add_auto_index_repository`
-- `remove_auto_index_repository`
 
-Search tools accept an optional `repo` argument so you can target one indexed codebase. `index_repository` supports `mode`, `hashMode`, and coverage options for freshness and index-coverage control; `diagnose_index_repository` runs the same engine verification path with `mode=verify` without updating Qdrant, local lexical artifacts, or managed auto-index status. `hybrid_code_search` also performs a post-engine rerank in the MCP wrapper so lexical corroboration and stronger feature matches surface ahead of semantic-only drift, while generated outputs are demoted.
+`hybrid_code_search` is the single agent-facing code-search entry point. It internally combines semantic and lexical retrieval, supplements live lexical matches, and reranks fused results before returning them.
 
-Repo scoping accepts a repository root, repo name, or repo id when it resolves uniquely.
+`list_indexed_repositories` remains available so clients can discover repository names, IDs, and roots for repo-scoped lookup. Repo scoping accepts a repository root, repo name, or repo id when it resolves uniquely.
 
-Manual indexing options exposed through `index_repository`:
-
-| Option | Purpose |
-| --- | --- |
-| `mode` | `incremental`, `force`, or `verify`. Defaults to `incremental`. |
-| `hashMode` | `metadata-first`, `hash-changed-candidates`, or `hash-all-candidates`. |
-| `includeDocs` | Includes common documentation files such as `.md`, `.mdx`, `.rst`, `.adoc`, and `.txt`. |
-| `includeGenerated` | Allows generated/build folders that are excluded by default, except dependency folders and Windows reserved names. |
-| `extraExtensions` | Adds indexed extensions such as `.json`, `.yml`, or `.shader`. |
-| `extraIncludeGlobs` | Adds include globs. Ignore rules still apply before include globs. |
-| `extraExcludeGlobs` | Adds repository-specific exclude globs. |
-| `maxFileBytes` | Overrides the maximum indexed file size. |
-
-Use `diagnose_index_repository` when you need a read-only freshness and coverage report. It defaults to `hashMode=hash-all-candidates` and returns manifest, candidate-file, excluded-file, Git, and hash-mismatch diagnostics.
+Repository index creation, removal, diagnostics, and auto-index enrollment are intentionally not exposed as MCP tools. Those operations remain available to the server runtime or external index-management tooling rather than the agent-facing surface.
 
 Current hybrid-search caveat:
 
 - if indexed test files contain the exact query text, lexical hits from `tests/` can still outrank the product code
 - wrapper reranking reduces semantic helper drift, but it does not replace index-time exclusion rules for `tests/`, generated files, or other non-product content
-- for the cleanest results, prefer repo scoping and consider excluding `tests/`, `out/`, `dist/`, and similar paths at index time
+- for the cleanest results, prefer repo scoping and appropriate index coverage/exclusion settings
 
 ## Auto indexing workflow
 
-Local config file:
+The auto-indexer runtime remains enabled because it owns startup indexing and file-change incremental reindexing. Removing that runtime would disable automatic reindexing when watched repositories change.
+
+Managed repository config:
 
 - `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
 
-You can edit that file directly to configure repo paths locally.
+Behavior:
 
-If you prefer a folder picker instead of editing JSON, run:
+- repositories with `auto_index_on_start=true` are incrementally indexed when the MCP server starts
+- repositories with `watch=true` are watched for file changes and incrementally reindexed by the runtime watcher
+- managed coverage settings such as `include_docs`, `include_generated`, `extra_extensions`, include/exclude globs, and `max_file_bytes` are reused for startup/watch indexing
+- startup and watch-driven results are written back into `managed-repositories.json`
 
-- `E:\\Program Files\\mcp\\open_windows_code_search_repo_manager.bat`
-
-That opens a local Windows GUI where you can:
-
-- browse for repo folders
-- enable or disable `watch`
-- enable or disable `auto_index_on_start`
-- save the config
-- trigger a one-off index for the selected repo
-
-Minimal format:
-
-```json
-{
-  "version": 1,
-  "repositories": [
-    {
-      "repo_root": "E:\\\\src\\\\repo-one",
-      "watch": true,
-      "auto_index_on_start": true,
-      "include_docs": true,
-      "include_generated": false
-    },
-    {
-      "repo_root": "E:\\\\src\\\\repo-two",
-      "watch": true,
-      "auto_index_on_start": false,
-      "extra_extensions": [".json", ".yml"],
-      "extra_exclude_globs": ["**/fixtures/**"]
-    }
-  ]
-}
-```
-
-Notes:
-
-- `repo_root` is required.
-- `watch` controls file-watch incremental reindexing.
-- `auto_index_on_start` controls startup reindexing.
-- Managed-repository coverage options are persisted and reused for startup/watch incremental indexing.
-- `include_docs` maps to the engine `includeDocs` option and includes common documentation files such as `.md`, `.mdx`, `.rst`, `.adoc`, and `.txt`.
-- `include_generated`, `extra_extensions`, `extra_include_globs`, `extra_exclude_globs`, and `max_file_bytes` map to the corresponding engine coverage options.
-- A repo-local `.mcp-index.json` can also define coverage defaults; explicit managed-repository options take precedence when present.
-- `last_*` fields are maintained by the server automatically; you do not need to add them yourself.
-- Startup and watch-driven index results are written back into `managed-repositories.json`.
+The agent-facing index-management tools have been removed. Repository enrollment and index-management changes should be made externally, for example through the managed config, `open_windows_code_search_repo_manager.bat`, launcher configuration such as `AUTO_INDEX_REPOS`, or a separate index-management tool. `list_indexed_repositories` remains exposed for discovering repositories that can be searched.
 
 Search/index data locations on this machine:
 
 - managed repo config: `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
 - manifest and lexical index root: `E:\\mcp-index-data`
 - Qdrant vector storage root: `E:\\mcp-index-data\\qdrant`
-
-Recommended MCP flow:
-
-1. Call `add_auto_index_repository` with:
-   - `repo_root`
-   - optional `watch=true`
-   - optional `auto_index_on_start=true`
-   - optional `index_now=true`
-2. The repo is persisted to `managed-repositories.json`.
-3. On later server restarts, repos with `auto_index_on_start=true` are indexed automatically.
-4. Repos with `watch=true` are watched for file changes and re-indexed incrementally.
-
-You can also preload repos from the launcher with `AUTO_INDEX_REPOS`.
 
 ## Authentication, restart behavior, and multi-chat isolation
 

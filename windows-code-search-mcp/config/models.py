@@ -5,31 +5,19 @@ from enum import Enum
 
 
 SEARCH_TOOL_NAMES = [
-    "semantic_code_search",
-    "lexical_code_search",
     "hybrid_code_search",
     "server_health",
     "list_indexed_repositories",
-    "index_repository",
-    "diagnose_index_repository",
-    "remove_indexed_repository",
-    "list_auto_index_repositories",
-    "add_auto_index_repository",
-    "remove_auto_index_repository",
 ]
 
 WORKSPACE_TOOL_NAMES = [
     "workspace_patch_summary",
-    "session_edit_context",
 ]
 
 
 FILE_EDIT_TOOL_NAMES = [
     "get_file_range",
     "get_multiple_file_ranges",
-    "request_file_edit",
-    "safe_file_edit",
-    "anchored_file_edit",
     "replace_range_or_anchor",
     "multi_anchor_file_edit",
 ]
