@@ -34,8 +34,8 @@ class RepoManagerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Windows Code Search Repo Manager")
-        self.root.geometry("860x520")
-        self.root.minsize(760, 460)
+        self.root.geometry("940x680")
+        self.root.minsize(820, 600)
 
         self.config_path = DEFAULT_CONFIG_PATH
         self.repositories: list[dict[str, object]] = []
@@ -44,6 +44,7 @@ class RepoManagerApp:
         self.repo_root_var = tk.StringVar()
         self.watch_var = tk.BooleanVar(value=True)
         self.auto_index_var = tk.BooleanVar(value=True)
+        self.exclude_patterns: list[str] = []
         self.status_var = tk.StringVar(value=f"Config: {self.config_path} | {_status_prefix()}")
 
         self._build_ui()
@@ -90,7 +91,26 @@ class RepoManagerApp:
         repo_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
 
         ttk.Checkbutton(form, text="Watch for file changes", variable=self.watch_var).grid(row=1, column=1, sticky="w", pady=(0, 8))
-        ttk.Checkbutton(form, text="Auto-index on startup", variable=self.auto_index_var).grid(row=2, column=1, sticky="w")
+        ttk.Checkbutton(form, text="Auto-index on startup", variable=self.auto_index_var).grid(row=2, column=1, sticky="w", pady=(0, 12))
+
+        ttk.Label(form, text="Excluded folders/files").grid(row=3, column=0, sticky="nw", pady=(0, 8))
+        exclude_frame = ttk.Frame(form)
+        exclude_frame.grid(row=3, column=1, sticky="nsew", pady=(0, 8))
+        exclude_frame.columnconfigure(0, weight=1)
+        exclude_frame.rowconfigure(0, weight=1)
+
+        self.exclude_list = tk.Listbox(exclude_frame, exportselection=False, height=8)
+        self.exclude_list.grid(row=0, column=0, sticky="nsew")
+        exclude_scroll = ttk.Scrollbar(exclude_frame, orient="vertical", command=self.exclude_list.yview)
+        exclude_scroll.grid(row=0, column=1, sticky="ns")
+        self.exclude_list.configure(yscrollcommand=exclude_scroll.set)
+
+        exclude_buttons = ttk.Frame(form)
+        exclude_buttons.grid(row=4, column=1, sticky="ew")
+        exclude_buttons.columnconfigure((0, 1, 2), weight=1)
+        ttk.Button(exclude_buttons, text="Add Folder...", command=self._add_excluded_folder).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(exclude_buttons, text="Add File...", command=self._add_excluded_file).grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(exclude_buttons, text="Remove", command=self._remove_exclusion).grid(row=0, column=2, sticky="ew")
 
         actions = ttk.Frame(right)
         actions.grid(row=2, column=0, sticky="ew", pady=(16, 0))
@@ -177,6 +197,8 @@ class RepoManagerApp:
             self.repo_root_var.set("")
             self.watch_var.set(True)
             self.auto_index_var.set(True)
+            self.exclude_patterns = []
+            self._refresh_exclude_list()
 
     def _populate_form(self, index: int) -> None:
         repo = self.repositories[index]
@@ -184,6 +206,14 @@ class RepoManagerApp:
         self.repo_root_var.set(str(repo.get("repo_root", "")))
         self.watch_var.set(bool(repo.get("watch", True)))
         self.auto_index_var.set(bool(repo.get("auto_index_on_start", True)))
+        patterns = repo.get("extra_exclude_globs", [])
+        self.exclude_patterns = [str(pattern) for pattern in patterns] if isinstance(patterns, list) else []
+        self._refresh_exclude_list()
+
+    def _refresh_exclude_list(self) -> None:
+        self.exclude_list.delete(0, tk.END)
+        for pattern in self.exclude_patterns:
+            self.exclude_list.insert(tk.END, pattern)
 
     def _on_select(self, event: object | None = None) -> None:
         selection = self.repo_list.curselection()
@@ -214,6 +244,58 @@ class RepoManagerApp:
         self.selected_index = len(self.repositories) - 1
         self._refresh_list()
         self.status_var.set(f"Added repository: {normalized}")
+
+    def _add_excluded_folder(self) -> None:
+        repo_root = self.repo_root_var.get().strip()
+        if not repo_root:
+            messagebox.showwarning("Missing Path", "Choose or enter a repository path first.")
+            return
+
+        folder = filedialog.askdirectory(title="Select Folder to Exclude", initialdir=repo_root)
+        if folder:
+            self._add_exclusion_path(folder, is_folder=True)
+
+    def _add_excluded_file(self) -> None:
+        repo_root = self.repo_root_var.get().strip()
+        if not repo_root:
+            messagebox.showwarning("Missing Path", "Choose or enter a repository path first.")
+            return
+
+        filename = filedialog.askopenfilename(title="Select File to Exclude", initialdir=repo_root)
+        if filename:
+            self._add_exclusion_path(filename, is_folder=False)
+
+    def _add_exclusion_path(self, selected_path: str, *, is_folder: bool) -> None:
+        repo_root = Path(self.repo_root_var.get().strip()).expanduser().resolve()
+        path = Path(selected_path).expanduser().resolve()
+        try:
+            relative_path = path.relative_to(repo_root)
+        except ValueError:
+            messagebox.showwarning(
+                "Outside Repository",
+                f"Exclusions must be inside the selected repository:\n{repo_root}",
+            )
+            return
+
+        if relative_path == Path("."):
+            messagebox.showwarning("Invalid Exclusion", "The repository root cannot exclude itself.")
+            return
+
+        pattern = relative_path.as_posix()
+        if is_folder:
+            pattern = f"{pattern}/**"
+        if pattern not in self.exclude_patterns:
+            self.exclude_patterns.append(pattern)
+            self._refresh_exclude_list()
+            self.exclude_list.selection_set(tk.END)
+        self.status_var.set(f"Added exclusion: {pattern}")
+
+    def _remove_exclusion(self) -> None:
+        selection = self.exclude_list.curselection()
+        if not selection:
+            return
+        del self.exclude_patterns[int(selection[0])]
+        self._refresh_exclude_list()
 
     def _remove_selected(self) -> None:
         if self.selected_index is None:
@@ -266,6 +348,7 @@ class RepoManagerApp:
         self.repositories[self.selected_index]["repo_root"] = normalized
         self.repositories[self.selected_index]["watch"] = bool(self.watch_var.get())
         self.repositories[self.selected_index]["auto_index_on_start"] = bool(self.auto_index_var.get())
+        self.repositories[self.selected_index]["extra_exclude_globs"] = list(self.exclude_patterns)
         self._refresh_list()
         self.status_var.set(f"Updated repository: {normalized}")
 
@@ -282,9 +365,17 @@ class RepoManagerApp:
         if not repo_root:
             messagebox.showwarning("Missing Path", "Choose or enter a repository path first.")
             return
+        extra_exclude_globs = self.repositories[self.selected_index].get("extra_exclude_globs", [])
 
         try:
-            completed = self._run_engine_command("index_repository", {"repoRoot": repo_root}, timeout=1800)
+            completed = self._run_engine_command(
+                "index_repository",
+                {
+                    "repoRoot": repo_root,
+                    "extraExcludeGlobs": extra_exclude_globs,
+                },
+                timeout=1800,
+            )
         except Exception as exc:
             messagebox.showerror("Index Failed", f"Could not start indexing:\n{exc}")
             return
