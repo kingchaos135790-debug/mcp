@@ -41,6 +41,7 @@ export type RepoIndexManifest = {
     queryPrefix: string;
     pooling: "mean";
     normalized: true;
+    chunkingVersion: number;
   };
   files: Record<string, RepoIndexedFileRecord>;
 };

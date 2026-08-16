@@ -30,7 +30,7 @@ import {
   type ExcludedFileSample,
   type IndexCoverageOptions,
 } from "../lib/fs-utils.js";
-import { extractCodeChunks } from "../lib/tree-sitter-utils.js";
+import { CODE_CHUNK_SCHEMA_VERSION, extractCodeChunks } from "../lib/tree-sitter-utils.js";
 import { buildLocalLexicalDocument, writeLocalLexicalIndex } from "../lib/local-lexical-utils.js";
 import { embedDocuments, getEmbeddingRuntimeConfig } from "../lib/embedding-utils.js";
 import { hasRipgrep } from "../lib/ripgrep-utils.js";
@@ -398,7 +398,8 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     && previousManifest.semanticIndex.collection === config.qdrantCollection
     && previousManifest.semanticIndex.queryPrefix === embedding.queryPrefix
     && previousManifest.semanticIndex.pooling === embedding.pooling
-    && previousManifest.semanticIndex.normalized === embedding.normalized,
+    && previousManifest.semanticIndex.normalized === embedding.normalized
+    && previousManifest.semanticIndex.chunkingVersion === CODE_CHUNK_SCHEMA_VERSION,
   );
   const semanticRebuildRequired = !semanticIndexCurrent;
   const manifest = previousManifest ?? createEmptyManifest(storage.repoId, storage.repoName, storage.repoRoot);
@@ -564,6 +565,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
       queryPrefix: embedding.queryPrefix,
       pooling: embedding.pooling,
       normalized: embedding.normalized,
+      chunkingVersion: CODE_CHUNK_SCHEMA_VERSION,
     },
     files: nextFiles,
   };
@@ -590,7 +592,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     git,
   });
   if (semanticRebuildRequired) {
-    warnings.push("Semantic embedding configuration changed; rebuilt all indexed candidate files.");
+    warnings.push("Semantic index configuration or chunking schema changed; rebuilt all indexed candidate files.");
   }
 
   return {

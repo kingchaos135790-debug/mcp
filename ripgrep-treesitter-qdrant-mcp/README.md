@@ -85,7 +85,9 @@ npm run build
 
 Semantic search uses `Xenova/bge-small-en-v1.5` through `@huggingface/transformers`. Embeddings are 384-dimensional, mean-pooled, and L2-normalized before cosine search in Qdrant. Retrieval queries use the BGE search instruction prefix while indexed code chunks are embedded as passages.
 
-The default semantic collection is `code_chunks_bge_small_en_v1_5`. Repository manifests store the active embedding model, dimensions, collection, pooling, normalization, and query prefix. If any of those settings change, the next non-verify index pass rebuilds semantic vectors even when source-file metadata is unchanged.
+The model tokenizer has a 512-token maximum input length. Tree-sitter therefore keeps semantic inputs focused on declarations such as functions, methods, classes, and types. Very large declarations can still exceed the model window, in which case later tokens are truncated by the embedding pipeline.
+
+The default semantic collection is `code_chunks_bge_small_en_v1_5`. Repository manifests store the active embedding model, dimensions, collection, pooling, normalization, query prefix, and chunking-schema version. If any of those settings change, the next non-verify index pass rebuilds semantic vectors even when source-file metadata is unchanged.
 
 Configuration:
 
@@ -311,7 +313,7 @@ That launcher starts the Python MCP host, which shells out to this repository's 
 
 - semantic search still uses a placeholder deterministic embedding function
 - ripgrep may be absent on some Windows setups, but the local lexical fallback still keeps lexical search usable
-- Tree-sitter extraction currently focuses on JavaScript, TypeScript/TSX, and Python; other indexed extensions fall back to file-level chunks
+- Tree-sitter extraction supports JavaScript, TypeScript/TSX, Python, Go, Rust, Java, C, C++, C#, Ruby, and PHP; unsupported extra extensions still fall back to file-level chunks
 - query-time coverage warnings are heuristic
 - dedicated automated tests for the freshness/coverage scenarios have not been added yet
 - this repository no longer includes or documents a standalone MCP host path

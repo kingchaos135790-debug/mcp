@@ -7,7 +7,7 @@ import { getSearchEngineConfig } from "./config.js";
 import { getRepoStoragePaths, hashText, removeIndexedRepository, resolveRepository, upsertIndexedRepository, writeRepoManifest, readRepoManifest, } from "./repository-store.js";
 import { checkQdrantConnection, deletePoints, deletePointsByFilter, ensureCollection, upsertChunks, } from "../lib/qdrant-utils.js";
 import { discoverSourceFiles, readText, toPosixRelative, } from "../lib/fs-utils.js";
-import { extractCodeChunks } from "../lib/tree-sitter-utils.js";
+import { CODE_CHUNK_SCHEMA_VERSION, extractCodeChunks } from "../lib/tree-sitter-utils.js";
 import { buildLocalLexicalDocument, writeLocalLexicalIndex } from "../lib/local-lexical-utils.js";
 import { embedDocuments, getEmbeddingRuntimeConfig } from "../lib/embedding-utils.js";
 import { hasRipgrep } from "../lib/ripgrep-utils.js";
@@ -285,7 +285,8 @@ export async function indexRepository(repoRootInput, options = {}) {
         && previousManifest.semanticIndex.collection === config.qdrantCollection
         && previousManifest.semanticIndex.queryPrefix === embedding.queryPrefix
         && previousManifest.semanticIndex.pooling === embedding.pooling
-        && previousManifest.semanticIndex.normalized === embedding.normalized);
+        && previousManifest.semanticIndex.normalized === embedding.normalized
+        && previousManifest.semanticIndex.chunkingVersion === CODE_CHUNK_SCHEMA_VERSION);
     const semanticRebuildRequired = !semanticIndexCurrent;
     const manifest = previousManifest ?? createEmptyManifest(storage.repoId, storage.repoName, storage.repoRoot);
     const git = await getGitChangedFiles(repoRoot);
@@ -434,6 +435,7 @@ export async function indexRepository(repoRootInput, options = {}) {
             queryPrefix: embedding.queryPrefix,
             pooling: embedding.pooling,
             normalized: embedding.normalized,
+            chunkingVersion: CODE_CHUNK_SCHEMA_VERSION,
         },
         files: nextFiles,
     };
@@ -459,7 +461,7 @@ export async function indexRepository(repoRootInput, options = {}) {
         git,
     });
     if (semanticRebuildRequired) {
-        warnings.push("Semantic embedding configuration changed; rebuilt all indexed candidate files.");
+        warnings.push("Semantic index configuration or chunking schema changed; rebuilt all indexed candidate files.");
     }
     return {
         repoId: storage.repoId,
