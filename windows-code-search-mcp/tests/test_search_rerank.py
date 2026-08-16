@@ -124,6 +124,34 @@ class SearchRerankTests(unittest.TestCase):
         self.assertEqual(reranked[0]["filePath"], "vscode-bridge-extension/src/bridgeClient.ts")
 
 
+    def test_rerank_prefers_hybrid_agreement_and_fusion_score_for_equal_query_matches(self) -> None:
+        fused = [
+            {
+                "source": "semantic",
+                "filePath": "src/semantic_only.py",
+                "symbol": "resolve_query",
+                "content": "resolve_query handles the request",
+                "score": 0.99,
+            },
+            {
+                "source": "hybrid",
+                "sources": ["semantic", "lexical"],
+                "fusionScore": 0.8,
+                "filePath": "src/hybrid.py",
+                "symbol": "resolve_query",
+                "content": "resolve_query handles the request",
+                "score": 0.1,
+            },
+        ]
+        lexical = [
+            {"filePath": "src/semantic_only.py", "text": "resolve_query handles the request"},
+            {"filePath": "src/hybrid.py", "text": "resolve_query handles the request"},
+        ]
+
+        reranked = _rerank_fused_hits("resolve_query", fused, lexical, limit=5)
+
+        self.assertEqual(reranked[0]["filePath"], "src/hybrid.py")
+
     def test_rerank_promotes_exact_lexical_hit_when_fused_omits_it(self) -> None:
         fused = [
             {

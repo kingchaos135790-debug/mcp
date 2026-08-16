@@ -338,9 +338,9 @@ def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | 
     identifier_candidates = _identifier_candidates(query)
     exact_query = query.strip().lower()
 
-    def metrics(item: object) -> tuple[int, int, int, int, int, int, int, int, int, int, float]:
+    def metrics(item: object) -> tuple[int, int, int, int, int, int, int, int, float, int, int, int, float]:
         if not isinstance(item, dict):
-            return (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float("-inf"))
+            return (0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0, 0, 0, float("-inf"))
         file_path = _normalize_path(item.get("filePath") or item.get("path") or item.get("file"))
         basename = _basename(file_path)
         symbol = str(item.get("symbol") or "").strip().lower()
@@ -353,6 +353,10 @@ def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | 
         path_overlap = _token_overlap(file_path, feature_tokens)
         symbol_overlap = _token_overlap(symbol, feature_tokens)
         snippet_overlap = _token_overlap(snippet, feature_tokens)
+        source = str(item.get("source") or "").strip().lower()
+        sources = {str(value).strip().lower() for value in item.get("sources", [])} if isinstance(item.get("sources"), list) else set()
+        source_agreement = 1 if source == "hybrid" or {"semantic", "lexical"}.issubset(sources) else 0
+        fusion_score = float(item.get("fusionScore") or 0.0)
         score = float(item.get("score") or 0.0)
         return (
             identifier_exact,
@@ -362,19 +366,21 @@ def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | 
             path_overlap,
             snippet_overlap,
             exact_phrase,
+            source_agreement,
+            fusion_score,
             path_preference,
             len(symbol),
             len(snippet),
             score,
         )
 
-    def should_keep(item_metrics: tuple[int, int, int, int, int, int, int, int, int, int, float]) -> bool:
+    def should_keep(item_metrics: tuple[int, int, int, int, int, int, int, int, float, int, int, int, float]) -> bool:
         identifier_exact = item_metrics[0]
         lexical_match = item_metrics[1]
         definition_like = item_metrics[2]
         overlap_total = sum(item_metrics[3:6])
         exact_phrase = item_metrics[6]
-        path_preference = item_metrics[7]
+        path_preference = item_metrics[9]
         return bool(
             identifier_exact
             or definition_like
@@ -409,7 +415,7 @@ def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | 
         has_source_definition = False
         for item in reranked:
             item_metrics = metrics(item)
-            path_preference = item_metrics[7]
+            path_preference = item_metrics[9]
             if path_preference >= 2 and (item_metrics[0] or item_metrics[2] or item_metrics[6]):
                 has_source_definition = True
                 break
@@ -417,7 +423,7 @@ def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | 
             filtered: list[object] = []
             for item in reranked:
                 item_metrics = metrics(item)
-                path_preference = item_metrics[7]
+                path_preference = item_metrics[9]
                 overlap_total = sum(item_metrics[3:6])
                 strong_source_match = bool(
                     item_metrics[0]

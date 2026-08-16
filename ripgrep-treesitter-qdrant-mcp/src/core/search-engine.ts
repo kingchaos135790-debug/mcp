@@ -13,27 +13,149 @@ function formatSemantic(hit: any) {
   };
 }
 
-function fuseResults(semantic: any[], lexical: any[]) {
-  const seen = new Set<string>();
-  const fused: any[] = [];
+type FusionSource = "semantic" | "lexical";
 
-  for (const hit of semantic) {
-    const key = `${hit.repoId || ""}::${hit.path || ""}::${hit.symbol || ""}::${hit.startLine || ""}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      fused.push({ source: "semantic", ...hit });
-    }
+type FusedCandidate = {
+  result: any;
+  score: number;
+  sources: Set<FusionSource>;
+  semanticRank?: number;
+  lexicalRank?: number;
+};
+
+const HYBRID_RRF_K = parsePositiveNumber(process.env.HYBRID_RRF_K, 60);
+const HYBRID_SEMANTIC_WEIGHT = parsePositiveNumber(process.env.HYBRID_SEMANTIC_WEIGHT, 1);
+const HYBRID_LEXICAL_WEIGHT = parsePositiveNumber(process.env.HYBRID_LEXICAL_WEIGHT, 1.2);
+
+function parsePositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeResultPath(result: any): string {
+  return String(result.path || result.file || "")
+    .replace(/^\.([\\/])/, "")
+    .replace(/\\/g, "/")
+    .toLowerCase();
+}
+
+function resultRepoId(result: any): string {
+  return String(result.repoId || result.repo || result.repoName || "").toLowerCase();
+}
+
+function resultLineRange(result: any): { start: number | null; end: number | null } {
+  const line = Number(result.line);
+  if (Number.isFinite(line) && line > 0) {
+    return { start: line, end: line };
   }
 
-  for (const hit of lexical) {
-    const key = `${hit.repoId || ""}::${hit.file || ""}::${hit.line || ""}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      fused.push({ source: hit.backend || "lexical", ...hit });
-    }
+  const start = Number(result.startLine);
+  const end = Number(result.endLine);
+  return {
+    start: Number.isFinite(start) && start > 0 ? start : null,
+    end: Number.isFinite(end) && end > 0 ? end : Number.isFinite(start) && start > 0 ? start : null,
+  };
+}
+
+function sameResultIdentity(left: any, right: any): boolean {
+  const leftRange = resultLineRange(left);
+  const rightRange = resultLineRange(right);
+  return resultRepoId(left) === resultRepoId(right)
+    && normalizeResultPath(left) === normalizeResultPath(right)
+    && leftRange.start === rightRange.start
+    && String(left.symbol || "") === String(right.symbol || "");
+}
+
+function sameLogicalResult(left: any, right: any): boolean {
+  if (resultRepoId(left) !== resultRepoId(right) || normalizeResultPath(left) !== normalizeResultPath(right)) {
+    return false;
   }
 
-  return fused;
+  const leftRange = resultLineRange(left);
+  const rightRange = resultLineRange(right);
+  if (leftRange.start === null || leftRange.end === null || rightRange.start === null || rightRange.end === null) {
+    return String(left.symbol || "") === String(right.symbol || "");
+  }
+
+  return leftRange.start <= rightRange.end && rightRange.start <= leftRange.end;
+}
+
+function resultSpan(result: any): number {
+  const range = resultLineRange(result);
+  if (range.start === null || range.end === null) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return Math.max(0, range.end - range.start);
+}
+
+function reciprocalRank(rank: number, weight: number): number {
+  return weight / (HYBRID_RRF_K + rank);
+}
+
+function mergeResultFields(primary: any, secondary: any): any {
+  const merged = { ...secondary, ...primary };
+  const filePath = primary.filePath || primary.path || primary.file || secondary.filePath || secondary.path || secondary.file;
+  if (filePath) {
+    merged.filePath = filePath;
+  }
+  if (!merged.snippet && secondary.snippet) {
+    merged.snippet = secondary.snippet;
+  }
+  if (!merged.text && secondary.text) {
+    merged.text = secondary.text;
+  }
+  return merged;
+}
+
+export function fuseResults(semantic: any[], lexical: any[], limit = 8) {
+  const candidates: FusedCandidate[] = [];
+
+  const addResult = (result: any, source: FusionSource, rank: number, weight: number) => {
+    let candidate = candidates.find((item) => item.sources.has(source) && sameResultIdentity(item.result, result));
+    if (!candidate) {
+      candidate = candidates
+        .filter((item) => !item.sources.has(source) && sameLogicalResult(item.result, result))
+        .sort((a, b) => resultSpan(a.result) - resultSpan(b.result))[0];
+    }
+    if (!candidate) {
+      candidate = {
+        result: { ...result },
+        score: 0,
+        sources: new Set<FusionSource>(),
+      };
+      candidates.push(candidate);
+    } else if (source === "semantic") {
+      candidate.result = mergeResultFields(result, candidate.result);
+    } else {
+      candidate.result = mergeResultFields(candidate.result, result);
+    }
+
+    candidate.score += reciprocalRank(rank, weight);
+    candidate.sources.add(source);
+    if (source === "semantic") {
+      candidate.semanticRank = Math.min(candidate.semanticRank ?? rank, rank);
+    } else {
+      candidate.lexicalRank = Math.min(candidate.lexicalRank ?? rank, rank);
+    }
+  };
+
+  semantic.forEach((result, index) => addResult(result, "semantic", index + 1, HYBRID_SEMANTIC_WEIGHT));
+  lexical.forEach((result, index) => addResult(result, "lexical", index + 1, HYBRID_LEXICAL_WEIGHT));
+
+  const maxScore = (HYBRID_SEMANTIC_WEIGHT + HYBRID_LEXICAL_WEIGHT) / (HYBRID_RRF_K + 1);
+  return candidates
+    .sort((a, b) => b.score - a.score
+      || (a.semanticRank ?? Number.MAX_SAFE_INTEGER) - (b.semanticRank ?? Number.MAX_SAFE_INTEGER)
+      || (a.lexicalRank ?? Number.MAX_SAFE_INTEGER) - (b.lexicalRank ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, Math.max(1, limit))
+    .map((candidate) => ({
+      ...candidate.result,
+      source: candidate.sources.size > 1 ? "hybrid" : Array.from(candidate.sources)[0],
+      sources: Array.from(candidate.sources),
+      fusionScore: Number((candidate.score / maxScore).toFixed(6)),
+      semanticRank: candidate.semanticRank,
+      lexicalRank: candidate.lexicalRank,
+    }));
 }
 
 function buildRepoFilter(repoId: string): Record<string, unknown> {
@@ -258,11 +380,17 @@ export async function hybridCodeSearch(query: string, limit?: number, repo?: str
   return {
     semantic: formattedSemantic,
     lexical: lexical.hits,
-    fused: fuseResults(formattedSemantic, lexical.hits),
+    fused: fuseResults(formattedSemantic, lexical.hits, cappedLimit),
     status: {
       qdrantCollection: config.qdrantCollection,
       repoFilter: repository?.repoId,
       lexicalBackend: lexical.backend,
+      fusion: {
+        algorithm: "weighted_rrf",
+        rrfK: HYBRID_RRF_K,
+        semanticWeight: HYBRID_SEMANTIC_WEIGHT,
+        lexicalWeight: HYBRID_LEXICAL_WEIGHT,
+      },
       ...lexical.status,
     },
   };
