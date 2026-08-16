@@ -38,6 +38,11 @@ class ServerApp:
             lifespan=self.lifespan,
             auth=build_auth(self.config),
         )
+        # Bind tool/resource/prompt execution from FastMCP's logical session rather
+        # than from ContextVars inherited by the long-lived server task at initialize.
+        from mcp_message_session import McpMessageSessionMiddleware
+
+        mcp.add_middleware(McpMessageSessionMiddleware())
         for extension in self.extensions:
             extension.register(mcp, self.context)
         self._register_discovery_routes(mcp)

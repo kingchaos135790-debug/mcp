@@ -208,6 +208,73 @@ class PersistentOAuthProviderTests(unittest.TestCase):
             "chat-continue",
         )
 
+    def test_transport_session_wins_when_shared_token_has_another_fallback(self) -> None:
+        session_context.set_current_chat_session_id("chat-a")
+        asyncio.run(self.provider.authorize(self.client, SimpleNamespace()))
+        auth_code = next(iter(self.provider.auth_codes))
+        token = asyncio.run(self.provider.exchange_authorization_code(self.client, auth_code))
+
+        self.assertEqual(
+            self.provider.resolve_chat_session_for_access_token(token.access_token),
+            "chat-a",
+        )
+
+        session_context.set_current_chat_session_id("chat-b")
+        asyncio.run(self.provider.load_access_token(token.access_token))
+
+        self.assertEqual(session_context.get_current_chat_session_id(), "chat-b")
+        self.assertEqual(
+            self.provider.resolve_chat_session_for_access_token(token.access_token),
+            "chat-a",
+        )
+
+    def test_soft_token_cap_does_not_evict_valid_credentials(self) -> None:
+        self.provider._max_persisted_tokens = 1
+        session_context.set_current_chat_session_id("")
+
+        asyncio.run(self.provider.authorize(self.client, SimpleNamespace()))
+        first_code = next(iter(self.provider.auth_codes))
+        first_token = asyncio.run(self.provider.exchange_authorization_code(self.client, first_code))
+
+        asyncio.run(self.provider.authorize(self.client, SimpleNamespace()))
+        second_code = next(iter(self.provider.auth_codes))
+        second_token = asyncio.run(self.provider.exchange_authorization_code(self.client, second_code))
+        self.provider._persist_state()
+
+        self.assertIn(first_token.access_token, self.provider.access_tokens)
+        self.assertIn(second_token.access_token, self.provider.access_tokens)
+        self.assertEqual(len(self.provider.access_tokens), 2)
+
+    def test_zero_token_cap_still_prunes_expired_credentials(self) -> None:
+        self.provider._max_persisted_tokens = 0
+        session_context.set_current_chat_session_id("")
+        asyncio.run(self.provider.authorize(self.client, SimpleNamespace()))
+        auth_code = next(iter(self.provider.auth_codes))
+        token = asyncio.run(self.provider.exchange_authorization_code(self.client, auth_code))
+        self.provider.access_tokens[token.access_token].expires_at = 0
+
+        self.provider._persist_state()
+
+        self.assertNotIn(token.access_token, self.provider.access_tokens)
+
+    def test_concurrent_shared_token_requests_keep_distinct_transport_contexts(self) -> None:
+        session_context.set_current_chat_session_id("chat-original")
+        asyncio.run(self.provider.authorize(self.client, SimpleNamespace()))
+        auth_code = next(iter(self.provider.auth_codes))
+        token = asyncio.run(self.provider.exchange_authorization_code(self.client, auth_code))
+
+        async def load_for(session_id: str) -> str:
+            session_context.set_current_chat_session_id(session_id)
+            await asyncio.sleep(0)
+            await self.provider.load_access_token(token.access_token)
+            return session_context.get_current_chat_session_id()
+
+        async def run_both() -> list[str]:
+            return await asyncio.gather(load_for("chat-one"), load_for("chat-two"))
+
+        results = asyncio.run(run_both())
+        self.assertCountEqual(results, ["chat-one", "chat-two"])
+
 
 class ResourceStampingTests(unittest.TestCase):
     def setUp(self) -> None:

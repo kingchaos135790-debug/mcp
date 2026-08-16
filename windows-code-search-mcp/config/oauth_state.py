@@ -1,8 +1,11 @@
 ﻿from __future__ import annotations
 
 import json
+import asyncio
+from functools import wraps
 import logging
 import os
+import time
 from pathlib import Path
 from threading import RLock
 
@@ -11,9 +14,11 @@ from mcp.shared.auth import OAuthClientInformationFull
 
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
 from windows_mcp.auth import StaticClientOAuthProvider
+from starlette.middleware import Middleware
 from session_context import (
     get_current_boot_id,
     get_current_chat_session_id,
+    McpSessionContextMiddleware,
     normalize_chat_session_id,
     register_token_session_binder,
     set_current_access_token,
@@ -25,10 +30,60 @@ from .models import Config
 LOGGER = logging.getLogger(__name__)
 
 
+def _synchronized_state(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._state_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _serialized_oauth_method(method):
+    @wraps(method)
+    async def wrapper(self, *args, **kwargs):
+        # Serialize auth-provider mutations across concurrent HTTP requests and also
+        # exclude synchronous tool-thread session binding while state is changing.
+        async with self._async_state_lock:
+            with self._state_lock:
+                return await method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _serialize_oauth_state_access(cls):
+    for name in (
+        "_drop_token_pair",
+        "_enforce_max_token_count",
+        "_persist_state",
+        "_load_state",
+        "_prune_session_maps",
+        "_record_token_session_ownership",
+        "_record_auth_code_session_ownership",
+        "resolve_chat_session_for_access_token",
+        "_stamp_resource_on_access_token",
+    ):
+        setattr(cls, name, _synchronized_state(getattr(cls, name)))
+    for name in (
+        "register_client",
+        "authorize",
+        "load_authorization_code",
+        "exchange_authorization_code",
+        "load_refresh_token",
+        "exchange_refresh_token",
+        "load_access_token",
+        "revoke_token",
+    ):
+        setattr(cls, name, _serialized_oauth_method(getattr(cls, name)))
+    return cls
+
+
+@_serialize_oauth_state_access
 class _PersistentOAuthStateMixin:
     def _init_persistence(self, storage_path: str | Path, max_tokens: int = 0) -> None:
         self._storage_path = Path(storage_path).expanduser().resolve()
         self._state_lock = RLock()
+        self._async_state_lock = asyncio.Lock()
         self._run_count = 0
         self._last_boot_id = ""
         self._max_persisted_tokens = max(
@@ -46,6 +101,11 @@ class _PersistentOAuthStateMixin:
             self._last_boot_id = current_boot_id
         register_token_session_binder(self.bind_access_token_to_chat_session)
         self._persist_state()
+
+    def get_middleware(self) -> list:
+        # This middleware must be outside AuthenticationMiddleware so load_access_token()
+        # sees the request's Mcp-Session-Id before resolving any OAuth fallback identity.
+        return [Middleware(McpSessionContextMiddleware), *super().get_middleware()]
 
     def _serialize_models(self, values: dict[str, object]) -> dict[str, object]:
         return {
@@ -82,32 +142,34 @@ class _PersistentOAuthStateMixin:
         return removed
 
     def _enforce_max_token_count(self) -> None:
+        # Always discard expired token pairs. A zero cap means "do not evict live
+        # credentials by count", not "retain expired credentials forever".
+        now = time.time()
+        expired_tokens = [
+            token
+            for token, token_obj in self.access_tokens.items()
+            if getattr(token_obj, "expires_at", None) is not None
+            and float(getattr(token_obj, "expires_at")) <= now
+        ]
+        for token in expired_tokens:
+            self._drop_token_pair(token, reason="expired")
+
         if self._max_persisted_tokens <= 0:
+            self._prune_session_maps()
             return
+
+        # The old behavior deleted arbitrary valid tokens once the cap was reached.
+        # GPT can reuse OAuth credentials across multiple MCP transport sessions, and
+        # those requests are not guaranteed to have a custom chat-session binding.
+        # Treating "unbound" as "inactive" could therefore revoke a live connector.
         overflow = len(self.access_tokens) - self._max_persisted_tokens
         if overflow > 0:
-            LOGGER.info(
-                "OAuth token pruning: %d access tokens exceed cap of %d, pruning %d (prefer unbound tokens)",
+            LOGGER.warning(
+                "OAuth token soft cap exceeded: valid=%d cap=%d overflow=%d; retaining live credentials",
                 len(self.access_tokens),
                 self._max_persisted_tokens,
                 overflow,
             )
-        while len(self.access_tokens) > self._max_persisted_tokens:
-            access_tokens = list(self.access_tokens)
-            if not access_tokens:
-                break
-            candidate_access_token = next(
-                (
-                    token
-                    for token in access_tokens
-                    if not self.resolve_chat_session_for_access_token(token)
-                ),
-                access_tokens[0],
-            )
-            if not candidate_access_token:
-                break
-            if not self._drop_token_pair(candidate_access_token, reason="max_token_count"):
-                break
         self._prune_session_maps()
 
     def _persist_state(self) -> None:
@@ -256,33 +318,45 @@ class _PersistentOAuthStateMixin:
 
         if access_token_value:
             old_session = self._access_token_session_map.get(access_token_value)
-            if old_session != normalized_session_id:
+            if not old_session:
                 self._access_token_session_map[access_token_value] = normalized_session_id
                 LOGGER.info(
-                    "OAuth binding created: access_token=...%s -> session=%s (was=%s)",
+                    "OAuth fallback binding created: access_token=...%s -> session=%s",
                     access_token_value[-8:] if len(access_token_value) >= 8 else access_token_value,
                     normalized_session_id,
-                    old_session or "(none)",
                 )
                 changed = True
+            elif old_session != normalized_session_id:
+                LOGGER.info(
+                    "OAuth access token observed in multiple MCP sessions: token=...%s fallback=%s current=%s",
+                    access_token_value[-8:] if len(access_token_value) >= 8 else access_token_value,
+                    old_session,
+                    normalized_session_id,
+                )
             linked_refresh = self._access_to_refresh_map.get(access_token_value)
-            if linked_refresh and self._refresh_token_session_map.get(linked_refresh) != normalized_session_id:
+            if linked_refresh and not self._refresh_token_session_map.get(linked_refresh):
                 self._refresh_token_session_map[linked_refresh] = normalized_session_id
                 changed = True
 
         if refresh_token_value:
             old_session = self._refresh_token_session_map.get(refresh_token_value)
-            if old_session != normalized_session_id:
+            if not old_session:
                 self._refresh_token_session_map[refresh_token_value] = normalized_session_id
                 LOGGER.info(
-                    "OAuth binding created: refresh_token=...%s -> session=%s (was=%s)",
+                    "OAuth fallback binding created: refresh_token=...%s -> session=%s",
                     refresh_token_value[-8:] if len(refresh_token_value) >= 8 else refresh_token_value,
                     normalized_session_id,
-                    old_session or "(none)",
                 )
                 changed = True
+            elif old_session != normalized_session_id:
+                LOGGER.info(
+                    "OAuth refresh token observed in multiple MCP sessions: token=...%s fallback=%s current=%s",
+                    refresh_token_value[-8:] if len(refresh_token_value) >= 8 else refresh_token_value,
+                    old_session,
+                    normalized_session_id,
+                )
             linked_access = self._refresh_to_access_map.get(refresh_token_value)
-            if linked_access and self._access_token_session_map.get(linked_access) != normalized_session_id:
+            if linked_access and not self._access_token_session_map.get(linked_access):
                 self._access_token_session_map[linked_access] = normalized_session_id
                 changed = True
 
@@ -448,20 +522,23 @@ class _PersistentOAuthStateMixin:
         request_session_id = get_current_chat_session_id()
         result = await super().load_access_token(token)
         set_current_access_token(token)
-        session_id = self.resolve_chat_session_for_access_token(token)
-        if not session_id and request_session_id:
+
+        fallback_session_id = self.resolve_chat_session_for_access_token(token)
+        session_id = request_session_id or fallback_session_id
+
+        # Mcp-Session-Id is authoritative for an MCP request. One OAuth credential can
+        # legitimately be reused by several ChatGPT chats, so a token->session mapping
+        # is only a fallback for requests that do not carry transport identity.
+        if request_session_id:
             linked_refresh = self._access_to_refresh_map.get(str(token), "")
-            session_id = self._record_token_session_ownership(
+            self._record_token_session_ownership(
                 access_token=str(token),
                 refresh_token=linked_refresh,
                 session_id=request_session_id,
             )
-            if session_id:
-                LOGGER.info(
-                    "Recovered missing OAuth session binding for access token during request continuation"
-                )
         if session_id:
             set_current_chat_session_id(session_id)
+
         if had_token and token not in self.access_tokens:
             LOGGER.info(
                 "OAuth binding loss: access_token=...%s evicted during load_access_token",
@@ -505,6 +582,7 @@ class PersistentStaticClientOAuthProvider(_PersistentOAuthStateMixin, StaticClie
         super().__init__(**kwargs)
         self._init_persistence(storage_path)
 
+    @_serialized_oauth_method
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         had_client = client_id in self.clients
         client = await super().get_client(client_id)

@@ -216,13 +216,15 @@ The launcher now defaults to stateful streamable HTTP and leaves true stateless 
 
 - `FASTMCP_STATELESS_HTTP=false`
 
-This reduces the chance that a post-crash server restart leaves the chat holding stale stateless tool handles without any transport session to invalidate.
+Stateful requests are now bound to the MCP transport's `Mcp-Session-Id` in request-local `ContextVar` state. The transport session is authoritative for the active request; OAuth token-to-session mappings are only a fallback because one ChatGPT OAuth credential may be reused by several MCP sessions.
+
+OAuth state mutations and persistence are serialized. The launcher also defaults `OAUTH_STATE_MAX_TOKENS=0`; if a positive soft cap is configured, valid credentials are retained and only expired token pairs are removed. A new chat must not revoke another live connector merely because its token lacks a custom chat-session binding.
 
 If you explicitly want true stateless request handling again, set:
 
 - `FASTMCP_STATELESS_HTTP=true`
 
-However, the server runtime is still shared process-wide.
+However, the interactive server runtime is still shared process-wide.
 
 `server_app.py` creates one shared:
 
@@ -267,16 +269,13 @@ Practical rules for multi-chat editing today:
 - do not assume window focus, clipboard state, or desktop automation are isolated just because VS Code session context is separated
 
 ### Per-chat isolation guidance
-Because the current transport is stateless HTTP, do not rely on in-memory connection or transport session ids as the isolation key.
+For stateful Streamable HTTP, use `Mcp-Session-Id` as the request-local isolation key whenever it is present. The initialization response establishes the new transport session, and subsequent requests restore that session before authentication and tool execution.
 
-Use a stable identity derived from one of:
+Do not use a bearer token as a one-to-one chat identity. ChatGPT can reuse one OAuth credential across several MCP transport sessions, so the persisted token-to-session association is deliberately fallback-only and is never allowed to overwrite the current transport session.
 
-- OAuth subject
-- token claims
-- an explicit session header injected by the connector
-- a signed session token
+If a future connector or transport does not provide `Mcp-Session-Id`, derive a stable fallback identity from an authenticated subject, token claims, an explicit connector session header, or a signed session token.
 
-That key must stay stable across requests.
+This protects connector/auth state across concurrent chats. It does not make Windows desktop, clipboard, shell/process state, or other machine-global interactive resources independent per chat; those still require a per-session runtime if stronger isolation is needed.
 
 Recommended architecture:
 
