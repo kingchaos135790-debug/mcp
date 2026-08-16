@@ -13,7 +13,7 @@ set "QDRANT_EXE=%QDRANT_ROOT%\qdrant.exe"
 set "QDRANT_START_BAT=%QDRANT_ROOT%\start-qdrant.bat"
 set "QDRANT_CONFIG_PATH=%QDRANT_ROOT%\config\local.yaml"
 set "QDRANT_URL=http://127.0.0.1:16333"
-set "QDRANT_COLLECTION=code_chunks"
+set "QDRANT_COLLECTION=code_chunks_bge_small_en_v1_5"
 set "INDEX_ROOT=E:\mcp-index-data"
 
 if not exist "%MCP_ROOT%\package.json" (

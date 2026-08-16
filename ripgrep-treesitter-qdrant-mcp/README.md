@@ -81,6 +81,30 @@ npm run build
 
 ## Runtime dependencies
 
+### Semantic embeddings
+
+Semantic search uses `Xenova/bge-small-en-v1.5` through `@huggingface/transformers`. Embeddings are 384-dimensional, mean-pooled, and L2-normalized before cosine search in Qdrant. Retrieval queries use the BGE search instruction prefix while indexed code chunks are embedded as passages.
+
+The default semantic collection is `code_chunks_bge_small_en_v1_5`. Repository manifests store the active embedding model, dimensions, collection, pooling, normalization, and query prefix. If any of those settings change, the next non-verify index pass rebuilds semantic vectors even when source-file metadata is unchanged.
+
+Configuration:
+
+```text
+EMBEDDING_MODEL=Xenova/bge-small-en-v1.5
+EMBEDDING_DIMENSIONS=384
+EMBEDDING_CACHE_DIR=E:\mcp-index-data\models
+EMBEDDING_BATCH_SIZE=16
+QDRANT_COLLECTION=code_chunks_bge_small_en_v1_5
+```
+
+The model is downloaded on first use and cached under `EMBEDDING_CACHE_DIR`. If direct model download is unavailable on a machine with a local proxy on port 7890, Node can use it with:
+
+```powershell
+$env:NODE_USE_ENV_PROXY = "1"
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+```
+
 ### Qdrant
 
 Expected local URL:

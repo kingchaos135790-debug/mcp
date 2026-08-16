@@ -5,6 +5,7 @@ import { listIndexedRepositories, readRepoManifest, resolveRepository } from "./
 import { checkQdrantConnection, semanticSearch } from "../lib/qdrant-utils.js";
 import { readLocalLexicalIndex, searchLocalLexicalDocuments } from "../lib/local-lexical-utils.js";
 import { hasRipgrep, queryRipgrep } from "../lib/ripgrep-utils.js";
+import { getEmbeddingRuntimeConfig } from "../lib/embedding-utils.js";
 function formatSemantic(hit) {
     return {
         score: hit.score,
@@ -310,6 +311,7 @@ export async function lexicalCodeSearch(query, limit, repo, caseMode) {
 }
 export async function hybridCodeSearch(query, limit, repo) {
     const config = getSearchEngineConfig();
+    const embedding = getEmbeddingRuntimeConfig();
     const qdrant = new QdrantClient({ url: config.qdrantUrl });
     const cappedLimit = clampLimit(limit);
     const repository = await resolveRepository(config, repo);
@@ -322,6 +324,12 @@ export async function hybridCodeSearch(query, limit, repo) {
         fused: fuseResults(formattedSemantic, lexical.hits, cappedLimit),
         status: {
             qdrantCollection: config.qdrantCollection,
+            embedding: {
+                model: embedding.model,
+                dimensions: embedding.dimensions,
+                pooling: embedding.pooling,
+                normalized: embedding.normalized,
+            },
             repoFilter: repository?.repoId,
             lexicalBackend: lexical.backend,
             fusion: {
@@ -349,11 +357,13 @@ export async function listIndexedCodebases() {
             zoektIndexRoot: repository.zoektIndexRoot,
             coverage: manifest?.coverage,
             freshnessStrategy: manifest?.freshnessStrategy,
+            semanticIndex: manifest?.semanticIndex,
         };
     }));
 }
 export async function searchEngineHealth() {
     const config = getSearchEngineConfig();
+    const embedding = getEmbeddingRuntimeConfig();
     const qdrant = new QdrantClient({ url: config.qdrantUrl });
     const ripgrepAvailable = await hasRipgrep();
     const qdrantStatus = await checkQdrantConnection(qdrant);
@@ -362,6 +372,7 @@ export async function searchEngineHealth() {
         cwd: process.cwd(),
         qdrantUrl: config.qdrantUrl,
         qdrantCollection: config.qdrantCollection,
+        embedding,
         qdrantReachable: qdrantStatus.ok,
         qdrantMessage: qdrantStatus.message,
         ripgrepAvailable,
@@ -381,6 +392,7 @@ export async function searchEngineHealth() {
                 fileCount: repository.fileCount,
                 coverage: manifest?.coverage,
                 freshnessStrategy: manifest?.freshnessStrategy,
+                semanticIndex: manifest?.semanticIndex,
             };
         })),
         repoHint: path.resolve(process.env.REPO_ROOT || "."),

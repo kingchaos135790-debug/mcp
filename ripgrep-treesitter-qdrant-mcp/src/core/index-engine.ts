@@ -20,7 +20,6 @@ import {
   deletePoints,
   deletePointsByFilter,
   ensureCollection,
-  fakeEmbedding,
   upsertChunks,
 } from "../lib/qdrant-utils.js";
 import {
@@ -33,6 +32,7 @@ import {
 } from "../lib/fs-utils.js";
 import { extractCodeChunks } from "../lib/tree-sitter-utils.js";
 import { buildLocalLexicalDocument, writeLocalLexicalIndex } from "../lib/local-lexical-utils.js";
+import { embedDocuments, getEmbeddingRuntimeConfig } from "../lib/embedding-utils.js";
 import { hasRipgrep } from "../lib/ripgrep-utils.js";
 
 const execFileAsync = promisify(execFile);
@@ -337,13 +337,16 @@ async function indexOneFile(args: {
   const contentHash = hashText(source);
   const chunks = extractCodeChunks(args.file, source);
   const qdrantPointIds: string[] = [];
+  const embeddingInputs = chunks.map((chunk) => `${relativePath}\n${chunk.symbol}\n${chunk.text}`);
+  const embeddings = await embedDocuments(embeddingInputs);
 
-  for (const chunk of chunks) {
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
     const id = buildPointId(args.repoId, relativePath, chunk);
     qdrantPointIds.push(id);
     args.pointsToUpsert.push({
       id,
-      vector: fakeEmbedding(`${relativePath}\n${chunk.symbol}\n${chunk.text}`),
+      vector: embeddings[index],
       payload: {
         repoId: args.repoId,
         repo: args.repoName,
@@ -387,6 +390,17 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
   const coverageOptions = mergeCoverageOptions(repoConfig, options);
   const discovery = await discoverSourceFiles(repoRoot, coverageOptions);
   const previousManifest = await readRepoManifest(storage.manifestPath);
+  const embedding = getEmbeddingRuntimeConfig();
+  const semanticIndexCurrent = Boolean(
+    previousManifest?.semanticIndex
+    && previousManifest.semanticIndex.model === embedding.model
+    && previousManifest.semanticIndex.dimensions === embedding.dimensions
+    && previousManifest.semanticIndex.collection === config.qdrantCollection
+    && previousManifest.semanticIndex.queryPrefix === embedding.queryPrefix
+    && previousManifest.semanticIndex.pooling === embedding.pooling
+    && previousManifest.semanticIndex.normalized === embedding.normalized,
+  );
+  const semanticRebuildRequired = !semanticIndexCurrent;
   const manifest = previousManifest ?? createEmptyManifest(storage.repoId, storage.repoName, storage.repoRoot);
   const git = await getGitChangedFiles(repoRoot);
   const files = discovery.files;
@@ -442,7 +456,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     throw new Error(`Qdrant is not reachable at ${config.qdrantUrl}. ${qdrantStatus.message}`);
   }
 
-  await ensureCollection(client, config.qdrantCollection);
+  await ensureCollection(client, config.qdrantCollection, embedding.dimensions);
 
   const seenPaths = new Set<string>();
   const nextFiles: Record<string, RepoIndexedFileRecord> = {};
@@ -466,7 +480,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
         }
       : undefined;
 
-    const forceRebuild = mode === "force";
+    const forceRebuild = mode === "force" || semanticRebuildRequired;
     const mustHash = forceRebuild || hashMode === "hash-all-candidates";
     const metadataMatches = existing && existing.size === stat.size && existing.mtimeMs === stat.mtimeMs && existingDocument;
 
@@ -543,6 +557,14 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     fileCount: documents.length,
     coverage: discovery.coverage,
     freshnessStrategy: hashMode,
+    semanticIndex: {
+      model: embedding.model,
+      dimensions: embedding.dimensions,
+      collection: config.qdrantCollection,
+      queryPrefix: embedding.queryPrefix,
+      pooling: embedding.pooling,
+      normalized: embedding.normalized,
+    },
     files: nextFiles,
   };
   await writeRepoManifest(storage.manifestPath, nextManifest);
@@ -567,6 +589,9 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     excludedFiles: discovery.excludedFiles,
     git,
   });
+  if (semanticRebuildRequired) {
+    warnings.push("Semantic embedding configuration changed; rebuilt all indexed candidate files.");
+  }
 
   return {
     repoId: storage.repoId,

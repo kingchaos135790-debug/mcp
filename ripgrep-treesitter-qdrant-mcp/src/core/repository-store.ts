@@ -34,6 +34,14 @@ export type RepoIndexManifest = {
   fileCount: number;
   coverage?: RepoIndexCoverage;
   freshnessStrategy?: string;
+  semanticIndex?: {
+    model: string;
+    dimensions: number;
+    collection: string;
+    queryPrefix: string;
+    pooling: "mean";
+    normalized: true;
+  };
   files: Record<string, RepoIndexedFileRecord>;
 };
 

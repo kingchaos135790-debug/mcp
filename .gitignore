@@ -9,3 +9,4 @@ mcp_inspector.bat
 patch_stateless_fix.ps1
 _server_slice_*.txt
 _debug_*.py
+ripgrep-treesitter-qdrant-mcp/node_modules/

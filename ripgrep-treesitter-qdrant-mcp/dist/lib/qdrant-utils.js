@@ -1,35 +1,27 @@
+import { embedQuery, getEmbeddingRuntimeConfig } from "./embedding-utils.js";
 const QDRANT_UPSERT_BATCH_SIZE = Number.parseInt(process.env.QDRANT_UPSERT_BATCH_SIZE || "100", 10);
 const QDRANT_DELETE_BATCH_SIZE = Number.parseInt(process.env.QDRANT_DELETE_BATCH_SIZE || "500", 10);
-export function fakeEmbedding(text, size = 128) {
-    const vec = new Array(size).fill(0);
-    for (let i = 0; i < text.length; i += 1) {
-        const code = text.charCodeAt(i);
-        vec[i % size] += ((code % 31) + 1) / 31;
-    }
-    const norm = Math.sqrt(vec.reduce((acc, value) => acc + value * value, 0)) || 1;
-    return vec.map((value) => value / norm);
-}
 export async function checkQdrantConnection(client) {
     try {
         await client.getCollections();
-        return { ok: true, message: 'Qdrant reachable' };
+        return { ok: true, message: "Qdrant reachable" };
     }
     catch (error) {
-        return { ok: false, message: error?.message || 'Unable to connect to Qdrant' };
+        return { ok: false, message: error?.message || "Unable to connect to Qdrant" };
     }
 }
-export async function ensureCollection(client, collectionName, vectorSize = 128) {
+export async function ensureCollection(client, collectionName, vectorSize = getEmbeddingRuntimeConfig().dimensions) {
     const collections = await client.getCollections();
     const exists = collections.collections.some((c) => c.name === collectionName);
     if (!exists) {
-        await client.createCollection(collectionName, { vectors: { size: vectorSize, distance: 'Cosine' } });
+        await client.createCollection(collectionName, { vectors: { size: vectorSize, distance: "Cosine" } });
         return;
     }
     const info = await client.getCollection(collectionName);
     const configVectors = info?.config?.params?.vectors;
-    const actualSize = typeof configVectors?.size === 'number' ? configVectors.size : undefined;
-    if (typeof actualSize === 'number' && actualSize !== vectorSize) {
-        throw new Error(`Qdrant collection ${collectionName} exists with vector size ${actualSize}, expected ${vectorSize}. Delete or reconfigure the collection before re-indexing.`);
+    const actualSize = typeof configVectors?.size === "number" ? configVectors.size : undefined;
+    if (typeof actualSize === "number" && actualSize !== vectorSize) {
+        throw new Error(`Qdrant collection ${collectionName} exists with vector size ${actualSize}, expected ${vectorSize}. Use a new QDRANT_COLLECTION or rebuild the collection before re-indexing.`);
     }
 }
 export async function upsertChunks(client, collectionName, points) {
@@ -58,6 +50,6 @@ export async function deletePointsByFilter(client, collectionName, filter) {
     await client.delete(collectionName, { wait: true, filter });
 }
 export async function semanticSearch(client, collectionName, query, limit = 8, filter) {
-    const vector = fakeEmbedding(query);
+    const vector = await embedQuery(query);
     return client.search(collectionName, { vector, limit, filter, with_payload: true });
 }

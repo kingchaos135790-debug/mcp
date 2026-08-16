@@ -11,7 +11,7 @@ export type SearchEngineConfig = {
 
 export function getSearchEngineConfig(): SearchEngineConfig {
   const qdrantUrl = process.env.QDRANT_URL || "http://127.0.0.1:16333";
-  const qdrantCollection = process.env.QDRANT_COLLECTION || "code_chunks";
+  const qdrantCollection = process.env.QDRANT_COLLECTION || "code_chunks_bge_small_en_v1_5";
   const indexRoot = path.resolve(process.env.INDEX_ROOT || "E:/mcp-index-data");
   const repositoriesRoot = path.join(indexRoot, "repositories");
   const registryPath = path.join(indexRoot, "repositories.json");

@@ -12,6 +12,7 @@
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.2.0",
     "@qdrant/js-client-rest": "1.17.0",
     "fast-glob": "3.3.3",
     "tree-sitter": "0.21.1",
