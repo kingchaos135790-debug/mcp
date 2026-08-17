@@ -1,7 +1,7 @@
 import path from "node:path";
 import { env, pipeline } from "@huggingface/transformers";
-const DEFAULT_MODEL = "Xenova/bge-small-en-v1.5";
-const DEFAULT_DIMENSIONS = 384;
+const DEFAULT_MODEL = "Xenova/bge-base-en-v1.5";
+const DEFAULT_DIMENSIONS = 768;
 const DEFAULT_BATCH_SIZE = 16;
 const DEFAULT_DEVICE = "cpu";
 const DEFAULT_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";

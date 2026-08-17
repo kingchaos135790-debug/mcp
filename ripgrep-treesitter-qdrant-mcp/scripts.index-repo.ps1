@@ -1,7 +1,7 @@
 param(
   [string]$RepoRoot = ".",
   [string]$QdrantUrl = "http://127.0.0.1:16333",
-  [string]$Collection = "code_chunks_bge_small_en_v1_5",
+  [string]$Collection = "code_chunks_bge_base_en_v1_5",
   [string]$IndexRoot = "..\data\index"
 )
 

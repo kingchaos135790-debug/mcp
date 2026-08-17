@@ -57,3 +57,20 @@ test("rejects unsupported embedding devices early", () => {
     /Unsupported EMBEDDING_DEVICE/,
   );
 });
+test("uses bge-base as the default embedding model", () => {
+  const previousModel = process.env.EMBEDDING_MODEL;
+  const previousDimensions = process.env.EMBEDDING_DIMENSIONS;
+  delete process.env.EMBEDDING_MODEL;
+  delete process.env.EMBEDDING_DIMENSIONS;
+
+  try {
+    const config = getEmbeddingRuntimeConfig();
+    assert.equal(config.model, "Xenova/bge-base-en-v1.5");
+    assert.equal(config.dimensions, 768);
+  } finally {
+    if (previousModel === undefined) delete process.env.EMBEDDING_MODEL;
+    else process.env.EMBEDDING_MODEL = previousModel;
+    if (previousDimensions === undefined) delete process.env.EMBEDDING_DIMENSIONS;
+    else process.env.EMBEDDING_DIMENSIONS = previousDimensions;
+  }
+});

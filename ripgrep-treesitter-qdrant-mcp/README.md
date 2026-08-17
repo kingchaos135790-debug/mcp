@@ -83,24 +83,26 @@ npm run build
 
 ### Semantic embeddings
 
-Semantic search uses `Xenova/bge-small-en-v1.5` through `@huggingface/transformers`. Embeddings are 384-dimensional, mean-pooled, and L2-normalized before cosine search in Qdrant. Retrieval queries use the BGE search instruction prefix while indexed code chunks are embedded as passages.
+Semantic search uses `Xenova/bge-base-en-v1.5` through `@huggingface/transformers`. Embeddings are 768-dimensional, mean-pooled, and L2-normalized before cosine search in Qdrant. Retrieval queries use the BGE search instruction prefix while indexed code chunks are embedded as passages.
 
 The model tokenizer has a 512-token maximum input length. Tree-sitter therefore keeps semantic inputs focused on declarations such as functions, methods, classes, and types. Very large declarations can still exceed the model window, in which case later tokens are truncated by the embedding pipeline.
 
-The default semantic collection is `code_chunks_bge_small_en_v1_5`. Repository manifests store the active embedding model, dimensions, collection, pooling, normalization, query prefix, and chunking-schema version. If any of those settings change, the next non-verify index pass rebuilds semantic vectors even when source-file metadata is unchanged.
+The default semantic collection is `code_chunks_bge_base_en_v1_5`. Repository manifests store the active embedding model, dimensions, collection, pooling, normalization, query prefix, and chunking-schema version. If any of those settings change, the next non-verify index pass rebuilds semantic vectors even when source-file metadata is unchanged.
 
 Configuration:
 
 ```text
-EMBEDDING_MODEL=Xenova/bge-small-en-v1.5
-EMBEDDING_DIMENSIONS=384
+EMBEDDING_MODEL=Xenova/bge-base-en-v1.5
+EMBEDDING_DIMENSIONS=768
 EMBEDDING_CACHE_DIR=E:\mcp-index-data\models
 EMBEDDING_DEVICE=cpu
 EMBEDDING_BATCH_SIZE=16
-QDRANT_COLLECTION=code_chunks_bge_small_en_v1_5
+QDRANT_COLLECTION=code_chunks_bge_base_en_v1_5
 ```
 
 `EMBEDDING_DEVICE` defaults to `cpu` for portability. The supported values are `cpu` and `dml`; on Windows, `dml` selects the DirectML ONNX backend. `auto` is intentionally not enabled because the tested Transformers.js 4.2.0 / ONNX Runtime 1.24.3 Windows stack can select an invalid DirectML provider combination. Device and batch-size settings affect runtime performance only and do not invalidate an existing semantic index because they do not change the model or vector semantics. Indexing combines chunks from multiple files in bounded, length-aware batches controlled by `EMBEDDING_BATCH_SIZE` to avoid both tiny per-file inference calls and excessive sequence padding.
+
+On the RTX 3080 Laptop GPU test machine, a 541-chunk DirectML benchmark measured about 110 chunks/s for BGE-small, 64 chunks/s for BGE-base, and 27-29 chunks/s for `jinaai/jina-embeddings-v2-base-code` with a 1024-token cap. On a 10-query repository retrieval check, BGE-base had the best MRR (0.825 versus 0.8125 for BGE-small and 0.7625 for Jina). Jina also exhausted DirectML memory on long 4k-6k-token batches without truncation, so BGE-base is the default quality-oriented model for this setup; BGE-small remains usable through environment overrides when indexing throughput is the priority.
 
 The model is downloaded on first use and cached under `EMBEDDING_CACHE_DIR`. If direct model download is unavailable on a machine with a local proxy on port 7890, Node can use it with:
 
