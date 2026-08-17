@@ -5,7 +5,9 @@ import json
 import os
 import subprocess
 import sys
+import time
 import tkinter as tk
+import urllib.request
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -24,10 +26,51 @@ DEFAULT_SEARCH_ENGINE_DIR = Path(
 )
 DEFAULT_NODE_EXE = os.getenv("NODE_EXE", "node")
 DEFAULT_INDEX_ROOT = os.getenv("INDEX_ROOT", r"E:\mcp-index-data")
+DEFAULT_QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:16333").rstrip("/")
+DEFAULT_QDRANT_START_BAT = Path(
+    os.getenv("QDRANT_START_BAT", r"E:\Program Files\qdrant\start-qdrant.bat")
+)
 
 
 def _status_prefix() -> str:
     return f"INDEX_ROOT: {DEFAULT_INDEX_ROOT}"
+
+
+def _qdrant_is_reachable() -> bool:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(f"{DEFAULT_QDRANT_URL}/collections", timeout=2) as response:
+            return 200 <= response.status < 300
+    except (OSError, ValueError):
+        return False
+
+
+def _ensure_qdrant_ready(timeout_seconds: float = 30, poll_interval_seconds: float = 0.5) -> None:
+    if _qdrant_is_reachable():
+        return
+    if not DEFAULT_QDRANT_START_BAT.is_file():
+        raise FileNotFoundError(f"Qdrant launcher not found: {DEFAULT_QDRANT_START_BAT}")
+
+    creationflags = 0
+    if sys.platform.startswith("win"):
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    subprocess.Popen(
+        [os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe"), "/d", "/c", str(DEFAULT_QDRANT_START_BAT)],
+        cwd=str(DEFAULT_QDRANT_START_BAT.parent),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval_seconds)
+        if _qdrant_is_reachable():
+            return
+    raise RuntimeError(
+        f"Qdrant could not be started at {DEFAULT_QDRANT_URL} within {timeout_seconds:g} seconds. "
+        f"Launcher: {DEFAULT_QDRANT_START_BAT}"
+    )
 
 
 class RepoManagerApp:
@@ -391,6 +434,7 @@ class RepoManagerApp:
                 f"Expected: {entrypoint}. Run the MCP launcher first or build the search engine."
             )
 
+        _ensure_qdrant_ready()
         completed = subprocess.run(
             [DEFAULT_NODE_EXE, str(entrypoint), command_name, json.dumps(payload)],
             cwd=str(DEFAULT_SEARCH_ENGINE_DIR),

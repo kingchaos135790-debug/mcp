@@ -3,6 +3,11 @@ setlocal
 
 set "MCP_DIR=E:\Program Files\mcp\windows-code-search-mcp"
 set "WINDOWS_MCP_DIR=E:\Program Files\mcp\Windows-MCP"
+set "SEARCH_ENGINE_DIR=E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp"
+set "QDRANT_ROOT=E:\Program Files\qdrant"
+set "QDRANT_START_BAT=%QDRANT_ROOT%\start-qdrant.bat"
+set "QDRANT_URL=http://127.0.0.1:16333"
+set "QDRANT_COLLECTION=code_chunks_bge_small_en_v1_5"
 set "INDEX_ROOT=E:\mcp-index-data"
 set "AUTO_INDEX_CONFIG_PATH=%MCP_DIR%\managed-repositories.json"
 set "PYTHON_CMD="
