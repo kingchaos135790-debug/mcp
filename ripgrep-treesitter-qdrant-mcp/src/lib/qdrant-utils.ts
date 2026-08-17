@@ -14,8 +14,22 @@ export type PointPayload = {
   content: string;
 };
 
-const QDRANT_UPSERT_BATCH_SIZE = Number.parseInt(process.env.QDRANT_UPSERT_BATCH_SIZE || "100", 10);
-const QDRANT_DELETE_BATCH_SIZE = Number.parseInt(process.env.QDRANT_DELETE_BATCH_SIZE || "500", 10);
+function positiveBatchSize(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isConnectionReset(error: any): boolean {
+  return error?.code === "ECONNRESET" || error?.cause?.code === "ECONNRESET";
+}
+
+export function getQdrantUpsertBatchSize(): number {
+  return positiveBatchSize(process.env.QDRANT_UPSERT_BATCH_SIZE, 100);
+}
+
+export function getQdrantDeleteBatchSize(): number {
+  return positiveBatchSize(process.env.QDRANT_DELETE_BATCH_SIZE, 500);
+}
 
 export async function checkQdrantConnection(client: QdrantClient): Promise<{ ok: boolean; message: string }> {
   try {
@@ -49,23 +63,24 @@ export async function ensureCollection(
 export async function upsertChunks(client: QdrantClient, collectionName: string, points: Array<{ id: string; vector: number[]; payload: PointPayload }>): Promise<void> {
   if (points.length === 0) return;
 
-  const batchSize = Number.isFinite(QDRANT_UPSERT_BATCH_SIZE) && QDRANT_UPSERT_BATCH_SIZE > 0
-    ? QDRANT_UPSERT_BATCH_SIZE
-    : 100;
-
+  const batchSize = getQdrantUpsertBatchSize();
   for (let i = 0; i < points.length; i += batchSize) {
     const batch = points.slice(i, i + batchSize);
-    await client.upsert(collectionName, { wait: true, points: batch });
+    try {
+      await client.upsert(collectionName, { wait: true, points: batch });
+    } catch (error) {
+      if (!isConnectionReset(error)) throw error;
+      // Streaming indexing can leave the HTTP keep-alive connection idle during a slow
+      // embedding batch. Retrying the same point IDs is safe because Qdrant upserts are idempotent.
+      await client.upsert(collectionName, { wait: true, points: batch });
+    }
   }
 }
 
 export async function deletePoints(client: QdrantClient, collectionName: string, pointIds: string[]): Promise<void> {
   if (pointIds.length === 0) return;
 
-  const batchSize = Number.isFinite(QDRANT_DELETE_BATCH_SIZE) && QDRANT_DELETE_BATCH_SIZE > 0
-    ? QDRANT_DELETE_BATCH_SIZE
-    : 500;
-
+  const batchSize = getQdrantDeleteBatchSize();
   for (let i = 0; i < pointIds.length; i += batchSize) {
     const batch = pointIds.slice(i, i + batchSize);
     await client.delete(collectionName, { wait: true, points: batch });

@@ -3,12 +3,21 @@ import { env, pipeline } from "@huggingface/transformers";
 const DEFAULT_MODEL = "Xenova/bge-small-en-v1.5";
 const DEFAULT_DIMENSIONS = 384;
 const DEFAULT_BATCH_SIZE = 16;
+const DEFAULT_DEVICE = "cpu";
 const DEFAULT_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
+const SUPPORTED_DEVICES = new Set(["cpu", "dml"]);
 let extractorPromise = null;
 let extractorKey = "";
 function positiveInt(value, fallback) {
     const parsed = Number.parseInt(value || "", 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+function embeddingDevice(value) {
+    const device = (value || DEFAULT_DEVICE).trim().toLowerCase();
+    if (!SUPPORTED_DEVICES.has(device)) {
+        throw new Error(`Unsupported EMBEDDING_DEVICE=${JSON.stringify(value)}. Expected cpu or dml.`);
+    }
+    return device;
 }
 export function getEmbeddingRuntimeConfig() {
     const indexRoot = path.resolve(process.env.INDEX_ROOT || "E:/mcp-index-data");
@@ -17,17 +26,24 @@ export function getEmbeddingRuntimeConfig() {
         dimensions: positiveInt(process.env.EMBEDDING_DIMENSIONS, DEFAULT_DIMENSIONS),
         batchSize: positiveInt(process.env.EMBEDDING_BATCH_SIZE, DEFAULT_BATCH_SIZE),
         cacheDir: path.resolve(process.env.EMBEDDING_CACHE_DIR || path.join(indexRoot, "models")),
+        device: embeddingDevice(process.env.EMBEDDING_DEVICE),
         queryPrefix: process.env.EMBEDDING_QUERY_PREFIX ?? DEFAULT_QUERY_PREFIX,
         pooling: "mean",
         normalized: true,
     };
 }
+export async function createEmbeddingExtractor(config, pipelineFactory = pipeline) {
+    env.cacheDir = config.cacheDir;
+    return pipelineFactory("feature-extraction", config.model, { device: config.device });
+}
+export function getEmbeddingExtractorCacheKey(config) {
+    return `${config.model}::${config.cacheDir}::${config.device}`;
+}
 async function getExtractor(config) {
-    const key = `${config.model}::${config.cacheDir}`;
+    const key = getEmbeddingExtractorCacheKey(config);
     if (!extractorPromise || extractorKey !== key) {
-        env.cacheDir = config.cacheDir;
         extractorKey = key;
-        extractorPromise = pipeline("feature-extraction", config.model);
+        extractorPromise = createEmbeddingExtractor(config);
     }
     return extractorPromise;
 }

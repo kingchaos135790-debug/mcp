@@ -95,9 +95,12 @@ Configuration:
 EMBEDDING_MODEL=Xenova/bge-small-en-v1.5
 EMBEDDING_DIMENSIONS=384
 EMBEDDING_CACHE_DIR=E:\mcp-index-data\models
+EMBEDDING_DEVICE=cpu
 EMBEDDING_BATCH_SIZE=16
 QDRANT_COLLECTION=code_chunks_bge_small_en_v1_5
 ```
+
+`EMBEDDING_DEVICE` defaults to `cpu` for portability. The supported values are `cpu` and `dml`; on Windows, `dml` selects the DirectML ONNX backend. `auto` is intentionally not enabled because the tested Transformers.js 4.2.0 / ONNX Runtime 1.24.3 Windows stack can select an invalid DirectML provider combination. Device and batch-size settings affect runtime performance only and do not invalidate an existing semantic index because they do not change the model or vector semantics. Indexing combines chunks from multiple files in bounded, length-aware batches controlled by `EMBEDDING_BATCH_SIZE` to avoid both tiny per-file inference calls and excessive sequence padding.
 
 The model is downloaded on first use and cached under `EMBEDDING_CACHE_DIR`. If direct model download is unavailable on a machine with a local proxy on port 7890, Node can use it with:
 

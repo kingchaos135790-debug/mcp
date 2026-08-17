@@ -20,7 +20,9 @@ import {
   deletePoints,
   deletePointsByFilter,
   ensureCollection,
+  getQdrantUpsertBatchSize,
   upsertChunks,
+  type PointPayload,
 } from "../lib/qdrant-utils.js";
 import {
   discoverSourceFiles,
@@ -33,6 +35,7 @@ import {
 import { CODE_CHUNK_SCHEMA_VERSION, extractCodeChunks } from "../lib/tree-sitter-utils.js";
 import { buildLocalLexicalDocument, writeLocalLexicalIndex } from "../lib/local-lexical-utils.js";
 import { embedDocuments, getEmbeddingRuntimeConfig } from "../lib/embedding-utils.js";
+import { EmbeddingBatchQueue } from "../lib/embedding-batcher.js";
 import { hasRipgrep } from "../lib/ripgrep-utils.js";
 
 const execFileAsync = promisify(execFile);
@@ -317,64 +320,16 @@ async function buildVerificationReport(args: {
   };
 }
 
-async function indexOneFile(args: {
+type FileReindexPlan = {
   file: string;
-  repoRoot: string;
-  repoId: string;
-  repoName: string;
-  indexedAt: string;
+  relativePath: string;
   existing?: RepoIndexedFileRecord;
-  pointIdsToDelete: Set<string>;
-  pointsToUpsert: Array<{ id: string; vector: number[]; payload: any }>;
-}): Promise<RepoIndexedFileRecord> {
-  const relativePath = toPosixRelative(args.repoRoot, args.file);
-  for (const pointId of args.existing?.qdrantPointIds || []) {
-    args.pointIdsToDelete.add(pointId);
-  }
+};
 
-  const source = await readText(args.file);
-  const stat = await fs.stat(args.file);
-  const contentHash = hashText(source);
-  const chunks = extractCodeChunks(args.file, source);
-  const qdrantPointIds: string[] = [];
-  const embeddingInputs = chunks.map((chunk) => `${relativePath}\n${chunk.symbol}\n${chunk.text}`);
-  const embeddings = await embedDocuments(embeddingInputs);
-
-  for (let index = 0; index < chunks.length; index += 1) {
-    const chunk = chunks[index];
-    const id = buildPointId(args.repoId, relativePath, chunk);
-    qdrantPointIds.push(id);
-    args.pointsToUpsert.push({
-      id,
-      vector: embeddings[index],
-      payload: {
-        repoId: args.repoId,
-        repo: args.repoName,
-        repoRoot: args.repoRoot,
-        path: relativePath,
-        symbol: chunk.symbol,
-        kind: chunk.kind,
-        language: chunk.language,
-        startLine: chunk.startLine,
-        endLine: chunk.endLine,
-        content: chunk.text,
-      },
-    });
-  }
-
-  return {
-    path: relativePath,
-    hash: contentHash,
-    size: stat.size,
-    mtimeMs: stat.mtimeMs,
-    qdrantPointIds,
-    document: buildLocalLexicalDocument(args.repoRoot, args.file, source, {
-      repoId: args.repoId,
-      repoName: args.repoName,
-    }),
-    updatedAt: args.indexedAt,
-  };
-}
+type PendingEmbeddingPoint = {
+  id: string;
+  payload: PointPayload;
+};
 
 export async function indexRepository(repoRootInput?: string, options: IndexRepositoryOptions = {}) {
   const config = getSearchEngineConfig();
@@ -461,7 +416,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
 
   const seenPaths = new Set<string>();
   const nextFiles: Record<string, RepoIndexedFileRecord> = {};
-  const pointsToUpsert: Array<{ id: string; vector: number[]; payload: any }> = [];
+  const filesToReindex: FileReindexPlan[] = [];
   const pointIdsToDelete = new Set<string>();
 
   let changedFiles = 0;
@@ -513,16 +468,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     }
 
     changedFiles += 1;
-    nextFiles[relativePath] = await indexOneFile({
-      file,
-      repoRoot,
-      repoId: storage.repoId,
-      repoName: storage.repoName,
-      indexedAt,
-      existing,
-      pointIdsToDelete,
-      pointsToUpsert,
-    });
+    filesToReindex.push({ file, relativePath, existing });
   }
 
   let deletedFiles = 0;
@@ -536,9 +482,81 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     }
   }
 
+  const readyPoints: Array<{ id: string; vector: number[]; payload: PointPayload }> = [];
+  const qdrantUpsertBatchSize = getQdrantUpsertBatchSize();
+  let upsertedPoints = 0;
+
+  const flushReadyPoints = async () => {
+    if (readyPoints.length === 0) return;
+    const batch = readyPoints.splice(0, readyPoints.length);
+    await upsertChunks(client, config.qdrantCollection, batch);
+    upsertedPoints += batch.length;
+  };
+
+  const embeddingQueue = new EmbeddingBatchQueue<PendingEmbeddingPoint>(
+    embedding.batchSize,
+    embedDocuments,
+    async (point, vector) => {
+      readyPoints.push({ ...point, vector });
+      if (readyPoints.length >= qdrantUpsertBatchSize) {
+        await flushReadyPoints();
+      }
+    },
+  );
+
+  for (const plan of filesToReindex) {
+    const source = await readText(plan.file);
+    const stat = await fs.stat(plan.file);
+    const contentHash = hashText(source);
+    const chunks = extractCodeChunks(plan.file, source);
+    const qdrantPointIds = chunks.map((chunk) => buildPointId(storage.repoId, plan.relativePath, chunk));
+    const currentPointIds = new Set(qdrantPointIds);
+    for (const pointId of plan.existing?.qdrantPointIds || []) {
+      if (!currentPointIds.has(pointId)) {
+        pointIdsToDelete.add(pointId);
+      }
+    }
+
+    nextFiles[plan.relativePath] = {
+      path: plan.relativePath,
+      hash: contentHash,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      qdrantPointIds,
+      document: buildLocalLexicalDocument(repoRoot, plan.file, source, {
+        repoId: storage.repoId,
+        repoName: storage.repoName,
+      }),
+      updatedAt: indexedAt,
+    };
+
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      await embeddingQueue.add(
+        `${plan.relativePath}\n${chunk.symbol}\n${chunk.text}`,
+        {
+          id: qdrantPointIds[index],
+          payload: {
+            repoId: storage.repoId,
+            repo: storage.repoName,
+            repoRoot,
+            path: plan.relativePath,
+            symbol: chunk.symbol,
+            kind: chunk.kind,
+            language: chunk.language,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            content: chunk.text,
+          },
+        },
+      );
+    }
+  }
+
+  await embeddingQueue.flush();
   const deletedPointIds = Array.from(pointIdsToDelete);
   await deletePoints(client, config.qdrantCollection, deletedPointIds);
-  await upsertChunks(client, config.qdrantCollection, pointsToUpsert);
+  await flushReadyPoints();
 
   const documents = Object.values(nextFiles)
     .sort((a, b) => a.path.localeCompare(b.path))
@@ -622,7 +640,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     },
     qdrant: {
       collection: config.qdrantCollection,
-      upsertedPoints: pointsToUpsert.length,
+      upsertedPoints,
       deletedPoints: deletedPointIds.length,
     },
     localLexicalIndex: {

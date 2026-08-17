@@ -1,11 +1,14 @@
 import path from "node:path";
 import { env, pipeline } from "@huggingface/transformers";
 
+export type EmbeddingDevice = "cpu" | "dml";
+
 export type EmbeddingRuntimeConfig = {
   model: string;
   dimensions: number;
   batchSize: number;
   cacheDir: string;
+  device: EmbeddingDevice;
   queryPrefix: string;
   pooling: "mean";
   normalized: true;
@@ -14,7 +17,9 @@ export type EmbeddingRuntimeConfig = {
 const DEFAULT_MODEL = "Xenova/bge-small-en-v1.5";
 const DEFAULT_DIMENSIONS = 384;
 const DEFAULT_BATCH_SIZE = 16;
+const DEFAULT_DEVICE: EmbeddingDevice = "cpu";
 const DEFAULT_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
+const SUPPORTED_DEVICES = new Set<EmbeddingDevice>(["cpu", "dml"]);
 
 let extractorPromise: Promise<any> | null = null;
 let extractorKey = "";
@@ -24,6 +29,14 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function embeddingDevice(value: string | undefined): EmbeddingDevice {
+  const device = (value || DEFAULT_DEVICE).trim().toLowerCase() as EmbeddingDevice;
+  if (!SUPPORTED_DEVICES.has(device)) {
+    throw new Error(`Unsupported EMBEDDING_DEVICE=${JSON.stringify(value)}. Expected cpu or dml.`);
+  }
+  return device;
+}
+
 export function getEmbeddingRuntimeConfig(): EmbeddingRuntimeConfig {
   const indexRoot = path.resolve(process.env.INDEX_ROOT || "E:/mcp-index-data");
   return {
@@ -31,18 +44,30 @@ export function getEmbeddingRuntimeConfig(): EmbeddingRuntimeConfig {
     dimensions: positiveInt(process.env.EMBEDDING_DIMENSIONS, DEFAULT_DIMENSIONS),
     batchSize: positiveInt(process.env.EMBEDDING_BATCH_SIZE, DEFAULT_BATCH_SIZE),
     cacheDir: path.resolve(process.env.EMBEDDING_CACHE_DIR || path.join(indexRoot, "models")),
+    device: embeddingDevice(process.env.EMBEDDING_DEVICE),
     queryPrefix: process.env.EMBEDDING_QUERY_PREFIX ?? DEFAULT_QUERY_PREFIX,
     pooling: "mean",
     normalized: true,
   };
 }
 
+export async function createEmbeddingExtractor(
+  config: EmbeddingRuntimeConfig,
+  pipelineFactory: typeof pipeline = pipeline,
+): Promise<any> {
+  env.cacheDir = config.cacheDir;
+  return pipelineFactory("feature-extraction", config.model, { device: config.device });
+}
+
+export function getEmbeddingExtractorCacheKey(config: EmbeddingRuntimeConfig): string {
+  return `${config.model}::${config.cacheDir}::${config.device}`;
+}
+
 async function getExtractor(config: EmbeddingRuntimeConfig): Promise<any> {
-  const key = `${config.model}::${config.cacheDir}`;
+  const key = getEmbeddingExtractorCacheKey(config);
   if (!extractorPromise || extractorKey !== key) {
-    env.cacheDir = config.cacheDir;
     extractorKey = key;
-    extractorPromise = pipeline("feature-extraction", config.model);
+    extractorPromise = createEmbeddingExtractor(config);
   }
   return extractorPromise;
 }
