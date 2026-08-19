@@ -32,7 +32,6 @@ class AccessToken(_ModelBase):
         self.scopes = list(scopes or ["mcp:access"])
         self.expires_at = expires_at
         self.resource = resource
-        self.access_token = token
 
 
 class RefreshToken(_ModelBase):
@@ -41,7 +40,6 @@ class RefreshToken(_ModelBase):
         self.client_id = client_id
         self.scopes = list(scopes or ["mcp:access", "offline_access"])
         self.expires_at = expires_at
-        self.refresh_token = token
 
 
 class AuthorizationCode(_ModelBase):
@@ -245,17 +243,29 @@ class PersistentOAuthProviderTests(unittest.TestCase):
         self.assertIn(second_token.access_token, self.provider.access_tokens)
         self.assertEqual(len(self.provider.access_tokens), 2)
 
-    def test_zero_token_cap_still_prunes_expired_credentials(self) -> None:
+    def test_restart_preserves_refresh_token_for_expired_access_token(self) -> None:
         self.provider._max_persisted_tokens = 0
         session_context.set_current_chat_session_id("")
-        asyncio.run(self.provider.authorize(self.client, SimpleNamespace()))
+        resource = "https://mcp.example.com/mcp"
+        asyncio.run(self.provider.authorize(self.client, SimpleNamespace(resource=resource)))
         auth_code = next(iter(self.provider.auth_codes))
         token = asyncio.run(self.provider.exchange_authorization_code(self.client, auth_code))
         self.provider.access_tokens[token.access_token].expires_at = 0
 
         self.provider._persist_state()
 
-        self.assertNotIn(token.access_token, self.provider.access_tokens)
+        restarted_provider = server_config.PersistentInMemoryOAuthProvider(storage_path=self.storage_path)
+        refresh_token_str = restarted_provider._access_to_refresh_map[token.access_token]
+        refresh_token = asyncio.run(restarted_provider.load_refresh_token(self.client, refresh_token_str))
+
+        self.assertIsNotNone(refresh_token)
+        self.assertIsNone(asyncio.run(restarted_provider.load_access_token(token.access_token)))
+        self.assertIn(refresh_token_str, restarted_provider.refresh_tokens)
+
+        rotated = asyncio.run(
+            restarted_provider.exchange_refresh_token(self.client, refresh_token, ["mcp:access"])
+        )
+        self.assertEqual(restarted_provider.access_tokens[rotated.access_token].resource, resource)
 
     def test_concurrent_shared_token_requests_keep_distinct_transport_contexts(self) -> None:
         session_context.set_current_chat_session_id("chat-original")

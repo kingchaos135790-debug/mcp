@@ -141,9 +141,18 @@ class _PersistentOAuthStateMixin:
             )
         return removed
 
+    def _has_live_linked_refresh_token(self, access_token: str, *, now: float | None = None) -> bool:
+        refresh_token = self._access_to_refresh_map.get(str(access_token or ""), "")
+        refresh_token_obj = self.refresh_tokens.get(refresh_token)
+        if refresh_token_obj is None:
+            return False
+        expires_at = getattr(refresh_token_obj, "expires_at", None)
+        return expires_at is None or float(expires_at) > (time.time() if now is None else now)
+
     def _enforce_max_token_count(self) -> None:
-        # Always discard expired token pairs. A zero cap means "do not evict live
-        # credentials by count", not "retain expired credentials forever".
+        # Keep expired access-token records while their refresh token is valid. FastMCP
+        # needs the pair mapping for refresh rotation, and the old access token carries
+        # the MCP resource that must be propagated to the replacement token.
         now = time.time()
         expired_tokens = [
             token
@@ -152,7 +161,8 @@ class _PersistentOAuthStateMixin:
             and float(getattr(token_obj, "expires_at")) <= now
         ]
         for token in expired_tokens:
-            self._drop_token_pair(token, reason="expired")
+            if not self._has_live_linked_refresh_token(token, now=now):
+                self._drop_token_pair(token, reason="expired_without_live_refresh")
 
         if self._max_persisted_tokens <= 0:
             self._prune_session_maps()
@@ -520,7 +530,15 @@ class _PersistentOAuthStateMixin:
     async def load_access_token(self, token: str):  # type: ignore[override]
         had_token = token in self.access_tokens
         request_session_id = get_current_chat_session_id()
-        result = await super().load_access_token(token)
+        token_obj = self.access_tokens.get(token)
+        expires_at = getattr(token_obj, "expires_at", None)
+        is_expired = expires_at is not None and float(expires_at) <= time.time()
+        if is_expired and self._has_live_linked_refresh_token(token):
+            # Reject the expired bearer without calling FastMCP's implementation,
+            # which revokes the still-valid refresh token as a side effect.
+            result = None
+        else:
+            result = await super().load_access_token(token)
         set_current_access_token(token)
 
         fallback_session_id = self.resolve_chat_session_for_access_token(token)

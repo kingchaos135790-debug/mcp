@@ -218,7 +218,7 @@ The launcher now defaults to stateful streamable HTTP and leaves true stateless 
 
 Stateful requests are now bound to the MCP transport's `Mcp-Session-Id` in request-local `ContextVar` state. The transport session is authoritative for the active request; OAuth token-to-session mappings are only a fallback because one ChatGPT OAuth credential may be reused by several MCP sessions.
 
-OAuth state mutations and persistence are serialized. The launcher also defaults `OAUTH_STATE_MAX_TOKENS=0`; if a positive soft cap is configured, valid credentials are retained and only expired token pairs are removed. A new chat must not revoke another live connector merely because its token lacks a custom chat-session binding.
+OAuth state mutations and persistence are serialized. The launcher also defaults `OAUTH_STATE_MAX_TOKENS=0`; if a positive soft cap is configured, valid credentials are retained. Expired access-token records remain persisted while their linked refresh token is valid so restart-time refresh and MCP resource propagation continue to work; pairs without a live refresh token are removed. A new chat must not revoke another live connector merely because its token lacks a custom chat-session binding.
 
 If you explicitly want true stateless request handling again, set:
 
@@ -351,7 +351,6 @@ Until interactive runtimes become session-scoped, document the edit contract as:
 - re-read the file after each successful write before issuing another edit
 
 That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.
-
 
 
 
