@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
 from dataclasses import asdict
+import json
 import os
+from pathlib import Path
 import re
 
 import fastmcp
@@ -514,7 +516,30 @@ class SearchExtension:
             ),
         )
         def list_indexed_repositories() -> str:
-            return format_tool_result(run_engine_tool(context, "list_indexed_repositories", {}))
+            # Repository discovery is registry-only. Avoid spawning the Node search
+            # engine (and loading its search/embedding dependencies) just to list repos.
+            index_root = Path(os.getenv("INDEX_ROOT", r"E:\mcp-index-data"))
+            registry_path = index_root / "repositories.json"
+            try:
+                payload = json.loads(registry_path.read_text(encoding="utf-8"))
+                repositories = payload.get("repositories", []) if isinstance(payload, dict) else []
+                compact = []
+                for repository in repositories:
+                    if not isinstance(repository, dict):
+                        continue
+                    compact.append({
+                        "repoId": repository.get("repoId"),
+                        "repoName": repository.get("repoName"),
+                        "repoRoot": repository.get("repoRoot"),
+                        "indexedAt": repository.get("indexedAt"),
+                        "fileCount": repository.get("fileCount"),
+                    })
+                return format_tool_result(compact)
+            except Exception as exc:
+                return format_tool_result({
+                    "error": f"Could not read indexed repository registry: {exc}",
+                    "registryPath": str(registry_path),
+                })
 
     async def start(self, context: ServerContext) -> None:
         return None
