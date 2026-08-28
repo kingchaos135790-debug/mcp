@@ -122,13 +122,19 @@ The integrated MCP exposes these search-side tools:
 
 - `hybrid_code_search`
 - `server_health`
+- `add_indexed_repository`
+- `remove_indexed_repository`
 - `list_indexed_repositories`
 
 `hybrid_code_search` is the single agent-facing code-search entry point. It internally combines semantic and lexical retrieval, supplements live lexical matches, and reranks fused results before returning them.
 
+`add_indexed_repository` enrolls or updates a managed repository without restarting the MCP server. By default it indexes immediately (`index_now=true`), enables file watching (`watch=true`), and refreshes the active watcher after the repository is saved. It also exposes the managed coverage options used by startup and watch indexing.
+
+`remove_indexed_repository` removes a repository from managed auto-indexing, deletes its indexed data through the search engine, and refreshes the active watcher set. The `reference` argument accepts the managed repository root or a unique repository folder name.
+
 `list_indexed_repositories` remains available so clients can discover repository names, IDs, and roots for repo-scoped lookup. Repo scoping accepts a repository root, repo name, or repo id when it resolves uniquely.
 
-Repository index creation, removal, diagnostics, and auto-index enrollment are intentionally not exposed as MCP tools. Those operations remain available to the server runtime or external index-management tooling rather than the agent-facing surface.
+Lower-level index diagnostics remain runtime or external index-management operations rather than agent-facing MCP tools.
 
 Current hybrid-search caveat:
 
@@ -150,8 +156,10 @@ Behavior:
 - repositories with `watch=true` are watched for file changes and incrementally reindexed by the runtime watcher
 - managed coverage settings such as `include_docs`, `include_generated`, `extra_extensions`, include/exclude globs, and `max_file_bytes` are reused for startup/watch indexing
 - startup and watch-driven results are written back into `managed-repositories.json`
+- `add_indexed_repository` can enroll or update a repository at runtime; its default `index_now=true` indexes immediately and then rebuilds the watcher set, so no MCP server restart is required
+- `remove_indexed_repository` removes a managed repository, cleans its indexed data, and rebuilds the watcher set without restarting the MCP server
 
-The agent-facing index-management tools have been removed. Repository enrollment and index-management changes should be made externally, for example through the managed config, `open_windows_code_search_repo_manager.bat`, launcher configuration such as `AUTO_INDEX_REPOS`, or a separate index-management tool. `list_indexed_repositories` remains exposed for discovering repositories that can be searched.
+Use `add_indexed_repository` and `remove_indexed_repository` for agent-driven repository enrollment and removal. Other lifecycle or diagnostic operations can still be performed through the managed config, `open_windows_code_search_repo_manager.bat`, launcher configuration, or separate index-management tooling.
 
 Search/index data locations on this machine:
 

@@ -1,4 +1,5 @@
 import importlib.util
+import asyncio
 import sys
 import types
 import unittest
@@ -11,7 +12,14 @@ sys.modules["fastmcp"] = fastmcp
 
 mcp = types.ModuleType("mcp")
 mcp_types = types.ModuleType("mcp.types")
-mcp_types.ToolAnnotations = object
+
+
+class ToolAnnotations:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+mcp_types.ToolAnnotations = ToolAnnotations
 sys.modules["mcp"] = mcp
 sys.modules["mcp.types"] = mcp_types
 
@@ -48,6 +56,113 @@ _identifier_candidates = search_module._identifier_candidates
 _rerank_fused_hits = search_module._rerank_fused_hits
 _extract_exact_matches = search_module._extract_exact_matches
 _clarify_generated_path_warnings = search_module._clarify_generated_path_warnings
+
+SearchExtension = search_module.SearchExtension
+
+
+class FakeMCP:
+    def __init__(self) -> None:
+        self.tools = {}
+
+    def tool(self, **metadata):
+        def decorator(func):
+            self.tools[metadata["name"]] = {"func": func, "metadata": metadata}
+            return func
+
+        return decorator
+
+
+class FakeAutoIndexer:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def add_repository(self, repo_root: str, **kwargs):
+        self.calls.append((repo_root, kwargs))
+        return {"repoRoot": repo_root, "indexedNow": kwargs["index_now"], "watch": kwargs["watch"]}
+
+    async def remove_repository(self, reference: str):
+        self.calls.append(("remove", reference))
+        return {"removed": True, "repoRoot": reference, "cleanupResult": {"removed": True}}
+
+
+class FakeContext:
+    def __init__(self) -> None:
+        self.auto_indexer = FakeAutoIndexer()
+
+    def get_auto_indexer(self):
+        return self.auto_indexer
+
+
+class SearchRepositoryManagementTests(unittest.TestCase):
+    def test_search_extension_registers_runtime_repository_management_tools(self) -> None:
+        mcp_instance = FakeMCP()
+        context = FakeContext()
+
+        SearchExtension().register(mcp_instance, context)
+
+        self.assertIn("add_indexed_repository", mcp_instance.tools)
+        add_annotations = mcp_instance.tools["add_indexed_repository"]["metadata"]["annotations"]
+        self.assertFalse(add_annotations.readOnlyHint)
+        self.assertFalse(add_annotations.destructiveHint)
+
+        self.assertIn("remove_indexed_repository", mcp_instance.tools)
+        remove_annotations = mcp_instance.tools["remove_indexed_repository"]["metadata"]["annotations"]
+        self.assertFalse(remove_annotations.readOnlyHint)
+        self.assertTrue(remove_annotations.destructiveHint)
+
+    def test_add_indexed_repository_forwards_runtime_index_options(self) -> None:
+        mcp_instance = FakeMCP()
+        context = FakeContext()
+        SearchExtension().register(mcp_instance, context)
+
+        result = asyncio.run(
+            mcp_instance.tools["add_indexed_repository"]["func"](
+                repo_root="C:/new-repo",
+                watch=False,
+                auto_index_on_start=False,
+                index_now=True,
+                include_docs=True,
+                include_generated=True,
+                extra_extensions=[".md"],
+                extra_include_globs=["docs/**"],
+                extra_exclude_globs=["vendor/**"],
+                max_file_bytes=1234,
+            )
+        )
+
+        self.assertEqual(result["repoRoot"], "C:/new-repo")
+        self.assertEqual(
+            context.auto_indexer.calls,
+            [(
+                "C:/new-repo",
+                {
+                    "watch": False,
+                    "auto_index_on_start": False,
+                    "index_now": True,
+                    "include_docs": True,
+                    "include_generated": True,
+                    "extra_extensions": [".md"],
+                    "extra_include_globs": ["docs/**"],
+                    "extra_exclude_globs": ["vendor/**"],
+                    "max_file_bytes": 1234,
+                },
+            )],
+        )
+
+    def test_remove_indexed_repository_forwards_reference_to_runtime(self) -> None:
+        mcp_instance = FakeMCP()
+        context = FakeContext()
+        SearchExtension().register(mcp_instance, context)
+
+        result = asyncio.run(
+            mcp_instance.tools["remove_indexed_repository"]["func"](
+                reference="example-repo",
+            )
+        )
+
+        self.assertTrue(result["removed"])
+        self.assertEqual(result["repoRoot"], "example-repo")
+        self.assertEqual(context.auto_indexer.calls, [("remove", "example-repo")])
 
 
 class SearchRerankTests(unittest.TestCase):

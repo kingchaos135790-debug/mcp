@@ -41,6 +41,12 @@ class ManagedRepository:
     repo_root: str
     watch: bool = True
     auto_index_on_start: bool = True
+    include_docs: bool = False
+    include_generated: bool = False
+    extra_extensions: list[str] = field(default_factory=list)
+    extra_include_globs: list[str] = field(default_factory=list)
+    extra_exclude_globs: list[str] = field(default_factory=list)
+    max_file_bytes: int = 0
     last_indexed_at: str = ""
     last_index_reason: str = ""
     last_result: dict[str, object] = field(default_factory=dict)
@@ -143,6 +149,35 @@ class RepositoryAutoIndexerTests(unittest.TestCase):
         backups = list(self.config_path.parent.glob("managed-repositories.invalid-*.json"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "not-json")
+
+    def test_remove_repository_removes_config_cleans_index_and_refreshes_watcher(self) -> None:
+        repo_root = str(Path(self.tempdir.name) / "example-repo")
+        Path(repo_root).mkdir()
+        self.config_path.write_text(
+            json.dumps({
+                "version": 1,
+                "repositories": [{"repo_root": repo_root, "watch": True, "auto_index_on_start": True}],
+            }),
+            encoding="utf-8",
+        )
+        cleanup_calls = []
+
+        def run_tool(tool_name, payload):
+            cleanup_calls.append((tool_name, payload))
+            return {"removed": True}
+
+        self.indexer.engine = SimpleNamespace(run_tool=run_tool)
+
+        result = asyncio.run(self.indexer.remove_repository("example-repo"))
+
+        self.assertTrue(result["removed"])
+        self.assertEqual(result["repoRoot"], repo_root)
+        self.assertEqual(cleanup_calls, [("remove_indexed_repository", {"repoRoot": repo_root})])
+        self.assertEqual(
+            json.loads(self.config_path.read_text(encoding="utf-8")),
+            {"version": 1, "repositories": []},
+        )
+        self.assertIsNone(self.indexer._watch_task)
 
 
 if __name__ == "__main__":

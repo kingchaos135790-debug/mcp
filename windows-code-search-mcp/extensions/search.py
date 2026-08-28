@@ -505,6 +505,58 @@ class SearchExtension:
             return format_tool_result(result)
 
         @mcp.tool(
+            name="add_indexed_repository",
+            description="Add or update a managed repository while the server is running, optionally index it immediately, and refresh file watching.",
+            annotations=ToolAnnotations(
+                title="add_indexed_repository",
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        async def add_indexed_repository(
+            repo_root: str,
+            watch: bool = True,
+            auto_index_on_start: bool = True,
+            index_now: bool = True,
+            include_docs: bool = False,
+            include_generated: bool = False,
+            extra_extensions: list[str] | None = None,
+            extra_include_globs: list[str] | None = None,
+            extra_exclude_globs: list[str] | None = None,
+            max_file_bytes: int = 0,
+        ) -> str:
+            result = await context.get_auto_indexer().add_repository(
+                repo_root,
+                watch=watch,
+                auto_index_on_start=auto_index_on_start,
+                index_now=index_now,
+                include_docs=include_docs,
+                include_generated=include_generated,
+                extra_extensions=extra_extensions,
+                extra_include_globs=extra_include_globs,
+                extra_exclude_globs=extra_exclude_globs,
+                max_file_bytes=max_file_bytes,
+            )
+            return format_tool_result(result)
+
+        @mcp.tool(
+            name="remove_indexed_repository",
+            description="Remove a managed repository at runtime, delete its indexed data, and refresh file watching. Accepts a managed repository root or unique repository name.",
+            annotations=ToolAnnotations(
+                title="remove_indexed_repository",
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        async def remove_indexed_repository(reference: str) -> str:
+            result = await context.get_auto_indexer().remove_repository(reference)
+            return format_tool_result(result)
+
+        @mcp.tool(
             name="list_indexed_repositories",
             description="List indexed codebases available for repo-scoped search.",
             annotations=ToolAnnotations(

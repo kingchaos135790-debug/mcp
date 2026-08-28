@@ -7,8 +7,11 @@ from enum import Enum
 SEARCH_TOOL_NAMES = [
     "hybrid_code_search",
     "server_health",
+    "add_indexed_repository",
+    "remove_indexed_repository",
     "list_indexed_repositories",
 ]
+
 
 WORKSPACE_TOOL_NAMES = [
     "workspace_patch_summary",
