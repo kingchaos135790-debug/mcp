@@ -32,7 +32,7 @@ set "EMBEDDING_BATCH_SIZE=16"
 set "AUTO_INDEX_CONFIG_PATH=%MCP_DIR%\managed-repositories.json"
 set "PYTHON_EXE=%WINDOWS_MCP_DIR%\.venv\Scripts\python.exe"
 set "MCP_HOST=127.0.0.1"
-set "MCP_PORT=8000"
+set "MCP_PORT=18000"
 set "VSCODE_BRIDGE_PORT=18876"
 set "MCP_LOG_DIR=%MCP_ROOT%\logs"
 if "%MCP_LOG_KEEP_COUNT%"=="" set "MCP_LOG_KEEP_COUNT=3"
@@ -152,11 +152,14 @@ call :log "Search engine dir: %SEARCH_ENGINE_DIR%"
 call :log "Windows-MCP dir: %WINDOWS_MCP_DIR%"
 call :log "Qdrant URL: %QDRANT_URL%"
 
-call :detect_listener_pid
-if defined MCP_LISTENER_PID (
-  call :log "Port %MCP_HOST%:%MCP_PORT% is already in use by PID %MCP_LISTENER_PID%. Exiting without starting another copy."
-  exit /b 0
+call :log "Checking for an existing MCP launcher on TCP port %MCP_PORT%"
+call :release_mcp_port
+if errorlevel 1 (
+  call :log "ERROR: TCP port %MCP_PORT% is occupied by a process that this launcher cannot safely replace"
+  pause
+  exit /b 1
 )
+call :log "TCP port %MCP_PORT% is available"
 
 call :log "Checking Qdrant at %QDRANT_URL%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -264,10 +267,10 @@ set "LOG_PATTERN="
 
 exit /b 0
 
-:detect_listener_pid
-set "MCP_LISTENER_PID="
-for /f "tokens=5" %%I in ('netstat -ano ^| findstr /R /C:"%MCP_HOST%:%MCP_PORT% .*LISTENING"') do set "MCP_LISTENER_PID=%%I"
-exit /b 0
+:release_mcp_port
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$port=[int]'%MCP_PORT%'; $launcher='%~f0'; $taskkill='%SystemRoot%\System32\taskkill.exe'; $ownerPids=@(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique); foreach ($ownerPid in $ownerPids) { try { $process=Get-Process -Id $ownerPid -ErrorAction Stop; $targetPid=$null; $cursor=Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f $ownerPid) -ErrorAction SilentlyContinue; while ($cursor -and $cursor.ParentProcessId) { $parent=Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f $cursor.ParentProcessId) -ErrorAction SilentlyContinue; if (-not $parent) { break }; if ($parent.Name -ieq 'cmd.exe' -and $parent.CommandLine -and $parent.CommandLine.IndexOf($launcher,[StringComparison]::OrdinalIgnoreCase) -ge 0) { $targetPid=$parent.ProcessId; break }; $cursor=$parent }; if ($targetPid) { Write-Host ('[INFO] Stopping existing MCP launcher tree PID {0} on TCP port {1}' -f $targetPid,$port); & $taskkill /PID $targetPid /T /F | Out-Host; if ($LASTEXITCODE -ne 0) { throw ('taskkill exited with code {0}' -f $LASTEXITCODE) } } else { Write-Host ('[ERROR] TCP port {0} is occupied by PID {1} ({2}), but it is not owned by this launcher. Refusing to terminate it.' -f $port,$ownerPid,$process.ProcessName); exit 1 } } catch { Write-Host ('[ERROR] Failed to inspect or release PID {0}: {1}' -f $ownerPid,$_.Exception.Message); exit 1 } }; for ($attempt=0; $attempt -lt 10; $attempt++) { if (-not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)) { exit 0 }; Start-Sleep -Milliseconds 250 }; Write-Host ('[ERROR] TCP port {0} is still in use after process cleanup' -f $port); exit 1"
+exit /b %ERRORLEVEL%
 
 :emit_tail
 set "TAIL_PATH=%~1"

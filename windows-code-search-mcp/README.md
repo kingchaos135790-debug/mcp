@@ -214,9 +214,9 @@ Why this matters:
 
 Tunnel and origin notes:
 
-- prefer a tunnel origin of `127.0.0.1:8000`, not `localhost:8000`
+- prefer a tunnel origin of `127.0.0.1:18000`, not `localhost:18000`
 - this avoids IPv6 `::1` resolution mismatches where the tunnel reaches `localhost` over IPv6 but the MCP server is only listening on `127.0.0.1`
-- if Cloudflare logs show connection failures to `dial tcp [::1]:8000`, treat that as an origin-binding problem, not a tool-handler failure
+- if Cloudflare logs show connection failures to `dial tcp [::1]:18000`, treat that as an origin-binding problem, not a tool-handler failure
 
 ### Concurrent access today
 
@@ -359,7 +359,6 @@ Until interactive runtimes become session-scoped, document the edit contract as:
 - re-read the file after each successful write before issuing another edit
 
 That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.
-
 
 
 
