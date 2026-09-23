@@ -14,6 +14,10 @@ from server_config import parse_bool
 from server_runtime import ServerContext
 from session_context import get_current_boot_id
 from utils.search_normalization import normalize_search_result
+from utils.search_response import (
+    compact_hybrid_search_result as _compact_hybrid_search_result,
+    compact_server_health as _compact_server_health,
+)
 
 from .common import format_tool_result, run_engine_tool
 
@@ -443,6 +447,7 @@ def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | 
 
 
 
+
 class SearchExtension:
     def register(self, mcp: FastMCP, context: ServerContext) -> None:
         @mcp.tool(
@@ -457,13 +462,17 @@ class SearchExtension:
             ),
         )
         def hybrid_code_search(query: str, limit: int = 8, repo: str = "") -> str:
+            limit = max(1, limit)
             candidate_limit = min(max(limit * 4, 20), 50)
             result = normalize_search_result(
                 run_engine_tool(context, "hybrid_code_search", {"query": query, "limit": candidate_limit, "repo": repo})
             )
             if isinstance(result, dict):
+                semantic = result.get("semantic")
                 fused = result.get("fused")
                 lexical = result.get("lexical")
+                semantic_candidates = len(semantic) if isinstance(semantic, list) else 0
+                fused_candidates = len(fused) if isinstance(fused, list) else 0
                 lexical_hits = _supplement_lexical_hits(
                     context,
                     query,
@@ -471,7 +480,8 @@ class SearchExtension:
                     candidate_limit,
                     lexical if isinstance(lexical, list) else None,
                 )
-                _annotate_result_sources(result.get("semantic"), "semantic_index")
+                lexical_candidates = len(lexical_hits)
+                _annotate_result_sources(semantic, "semantic_index")
                 _annotate_result_sources(lexical_hits, "live_lexical")
                 result["lexical"] = lexical_hits
                 result["exact_matches"] = _extract_exact_matches(query, lexical_hits, limit)
@@ -479,6 +489,13 @@ class SearchExtension:
                 if isinstance(fused, list) and fused:
                     result["fused"] = _rerank_fused_hits(query, fused, lexical_hits, limit)
                     _annotate_result_sources(result["fused"], "hybrid_fused")
+                _compact_hybrid_search_result(
+                    result,
+                    limit=limit,
+                    semantic_candidates=semantic_candidates,
+                    lexical_candidates=lexical_candidates,
+                    fused_candidates=fused_candidates,
+                )
             return format_tool_result(result)
 
         @mcp.tool(
@@ -502,6 +519,7 @@ class SearchExtension:
                 result["streamableHttpPath"] = str(getattr(fastmcp.settings, "streamable_http_path", ""))
                 result["statelessHttp"] = bool(getattr(fastmcp.settings, "stateless_http", False))
                 result["watchdogEnabled"] = parse_bool(os.getenv("WINDOWS_MCP_WATCHDOG_ENABLED"), False)
+                _compact_server_health(result)
             return format_tool_result(result)
 
         @mcp.tool(

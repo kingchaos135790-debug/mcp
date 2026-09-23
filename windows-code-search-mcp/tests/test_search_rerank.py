@@ -1,5 +1,6 @@
 import importlib.util
 import asyncio
+import json
 import sys
 import types
 import unittest
@@ -56,6 +57,8 @@ _identifier_candidates = search_module._identifier_candidates
 _rerank_fused_hits = search_module._rerank_fused_hits
 _extract_exact_matches = search_module._extract_exact_matches
 _clarify_generated_path_warnings = search_module._clarify_generated_path_warnings
+_compact_hybrid_search_result = search_module._compact_hybrid_search_result
+_compact_server_health = search_module._compact_server_health
 
 SearchExtension = search_module.SearchExtension
 
@@ -408,6 +411,95 @@ class SearchRerankTests(unittest.TestCase):
         reranked = _rerank_fused_hits("hybrid_code_search", fused, lexical, limit=5)
 
         self.assertEqual([item["filePath"] for item in reranked], ["extensions/search.py"])
+
+    def test_hybrid_tool_returns_bounded_sections_and_clipped_snippets(self) -> None:
+        mcp_instance = FakeMCP()
+        context = FakeContext()
+        original_run_engine_tool = search_module.run_engine_tool
+
+        long_text = "alpha " + ("x" * 2000)
+        candidates = [
+            {
+                "source": "semantic",
+                "filePath": f"src/file_{index}.py",
+                "symbol": f"alpha_{index}",
+                "content": long_text,
+                "score": 1.0 - (index * 0.01),
+            }
+            for index in range(20)
+        ]
+
+        def fake_run_engine_tool(_context, tool_name, payload):
+            if tool_name == "hybrid_code_search":
+                self.assertEqual(payload["limit"], 32)
+                return {
+                    "semantic": [dict(item) for item in candidates],
+                    "lexical": [
+                        {
+                            "filePath": item["filePath"],
+                            "line": index + 1,
+                            "text": long_text,
+                        }
+                        for index, item in enumerate(candidates)
+                    ],
+                    "fused": [dict(item) for item in candidates],
+                    "status": {},
+                }
+            if tool_name == "lexical_code_search":
+                return {"hits": []}
+            self.fail(f"unexpected tool: {tool_name}")
+
+        try:
+            search_module.run_engine_tool = fake_run_engine_tool
+            SearchExtension().register(mcp_instance, context)
+            result = mcp_instance.tools["hybrid_code_search"]["func"](
+                "alpha",
+                limit=8,
+                repo="mcp",
+            )
+        finally:
+            search_module.run_engine_tool = original_run_engine_tool
+
+        self.assertEqual(len(result["semantic"]), 3)
+        self.assertEqual(len(result["lexical"]), 3)
+        self.assertLessEqual(len(result["exact_matches"]), 8)
+        self.assertEqual(len(result["fused"]), 8)
+        self.assertEqual(result["resultCounts"]["semanticCandidates"], 20)
+        self.assertEqual(result["resultCounts"]["lexicalCandidates"], 20)
+        self.assertEqual(result["resultCounts"]["fusedCandidates"], 20)
+        self.assertIn("[truncated ", result["semantic"][0]["content"])
+        self.assertLess(len(result["semantic"][0]["content"]), len(long_text))
+        self.assertLess(len(json.dumps(result)), 30_000)
+
+    def test_server_health_compaction_removes_large_repository_details(self) -> None:
+        result = {
+            "repositories": [
+                {
+                    "repoId": "repo-1",
+                    "repoName": "repo",
+                    "repoRoot": "C:/repo",
+                    "fileCount": 100,
+                    "coverage": {"files": ["large"] * 100},
+                }
+            ],
+            "autoIndexRepositories": [
+                {
+                    "repo_root": "C:/repo",
+                    "watch": True,
+                    "auto_index_on_start": True,
+                    "last_result": {"files": ["large"] * 100},
+                    "last_error": "",
+                }
+            ],
+        }
+
+        _compact_server_health(result)
+
+        self.assertEqual(result["repositoryCount"], 1)
+        self.assertEqual(result["autoIndexRepositoryCount"], 1)
+        self.assertNotIn("coverage", result["repositories"][0])
+        self.assertNotIn("last_result", result["autoIndexRepositories"][0])
+        self.assertEqual(result["autoIndexRepositories"][0]["repo_root"], "C:/repo")
 
 
 if __name__ == "__main__":
