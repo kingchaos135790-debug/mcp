@@ -21,36 +21,34 @@ except ModuleNotFoundError:
 import repo_manager
 
 
-class QdrantReadinessTests(unittest.TestCase):
-    def test_does_not_start_qdrant_when_already_reachable(self) -> None:
-        with patch("repo_manager._qdrant_is_reachable", return_value=True):
-            with patch("repo_manager.subprocess.Popen") as popen:
-                repo_manager._ensure_qdrant_ready()
-
-        popen.assert_not_called()
-
-    def test_starts_qdrant_and_waits_until_reachable(self) -> None:
+class RepoManagerEngineTests(unittest.TestCase):
+    def test_index_runs_without_starting_a_database_service(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            launcher = Path(tempdir) / "start-qdrant.bat"
-            launcher.touch()
-            with patch("repo_manager.DEFAULT_QDRANT_START_BAT", launcher):
-                with patch("repo_manager._qdrant_is_reachable", side_effect=[False, False, True]):
-                    with patch("repo_manager.time.sleep"):
-                        with patch("repo_manager.subprocess.Popen") as popen:
-                            repo_manager._ensure_qdrant_ready()
+            engine = Path(tempdir)
+            entry = engine / "dist" / "cli" / "run-core.js"
+            entry.parent.mkdir(parents=True)
+            entry.touch()
+            app = object.__new__(repo_manager.RepoManagerApp)
+            completed = subprocess.CompletedProcess([], 0, '{"gitnexus": {}}', '')
+            with patch("repo_manager.DEFAULT_SEARCH_ENGINE_DIR", engine):
+                with patch("repo_manager.subprocess.Popen") as popen:
+                    with patch("repo_manager.subprocess.run", return_value=completed) as run:
+                        result = app._run_engine_command("index_repository", {"repoRoot": "C:/repo"})
+            self.assertIs(result, completed)
+            popen.assert_not_called()
+            self.assertEqual(run.call_args.args[0][2], "index_repository")
 
-        popen.assert_called_once()
-        self.assertEqual(popen.call_args.args[0][-1], str(launcher))
-        self.assertEqual(popen.call_args.kwargs["stdout"], subprocess.DEVNULL)
-        self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
-
-    def test_reports_a_missing_qdrant_launcher(self) -> None:
-        missing_launcher = MagicMock()
-        missing_launcher.is_file.return_value = False
-        with patch("repo_manager.DEFAULT_QDRANT_START_BAT", missing_launcher):
-            with patch("repo_manager._qdrant_is_reachable", return_value=False):
-                with self.assertRaisesRegex(FileNotFoundError, "Qdrant launcher not found"):
-                    repo_manager._ensure_qdrant_ready()
+    def test_engine_failure_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            engine = Path(tempdir)
+            entry = engine / "dist" / "cli" / "run-core.js"
+            entry.parent.mkdir(parents=True)
+            entry.touch()
+            app = object.__new__(repo_manager.RepoManagerApp)
+            with patch("repo_manager.DEFAULT_SEARCH_ENGINE_DIR", engine):
+                with patch("repo_manager.subprocess.run", return_value=subprocess.CompletedProcess([], 1, '', 'GitNexus failed')):
+                    with self.assertRaisesRegex(RuntimeError, "GitNexus failed"):
+                        app._run_engine_command("index_repository", {})
 
 
 if __name__ == "__main__":

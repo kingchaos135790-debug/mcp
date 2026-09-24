@@ -4,8 +4,8 @@
 
 It provides:
 
-- semantic indexing and retrieval through Qdrant
-- syntax-aware chunking through Tree-sitter
+- GitNexus graph indexing and retrieval with embeddings disabled
+- syntax-aware graph symbols, modules, and execution flows from GitNexus
 - lexical search through ripgrep when available
 - a Windows-safe local lexical fallback when ripgrep is unavailable
 - index freshness and coverage diagnostics for repository indexing
@@ -21,14 +21,14 @@ That Python host calls this repository through `dist\cli\run-core.js`.
 
 ## Repository layout
 
-- `src/core/search-engine.ts` - reusable semantic, lexical, hybrid, health, and query-coverage warning operations
+- `src/core/search-engine.ts` - reusable graph, lexical, hybrid, health, and query-coverage warning operations
 - `src/core/index-engine.ts` - reusable repository indexing, freshness, coverage, verification, and cleanup logic
 - `src/core/repository-store.ts` - per-repository manifests and registry helpers
 - `src/cli/run-core.ts` - CLI bridge used by external hosts such as `windows-code-search-mcp`
 - `src/cli/index-repo.ts` - direct basic repository indexing CLI
 - `src/lib/fs-utils.ts` - file discovery, coverage reporting, and text loading
 - `src/lib/tree-sitter-utils.ts` - syntax-aware code chunk extraction
-- `src/lib/qdrant-utils.ts` - Qdrant collection and semantic search helpers
+- `src/lib/gitnexus-utils.ts` - pinned GitNexus CLI adapter, graph result normalization, and runtime health
 - `src/lib/ripgrep-utils.ts` - ripgrep detection and lexical search helpers
 - `src/lib/local-lexical-utils.ts` - local lexical index and fallback search helpers
 - `scripts.index-repo.ps1` - PowerShell helper for basic indexing
@@ -38,7 +38,6 @@ That Python host calls this repository through `dist\cli\run-core.js`.
 
 The CLI bridge in `dist\cli\run-core.js` accepts these commands:
 
-- `semantic_code_search`
 - `lexical_code_search`
 - `hybrid_code_search`
 - `server_health`
@@ -59,7 +58,7 @@ Example with payload:
 
 ```powershell
 cd "E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp"
-node .\dist\cli\run-core.js semantic_code_search "{\"query\":\"vector normalize\",\"limit\":5}"
+node .\dist\cli\run-core.js hybrid_code_search "{\"query\":\"vector normalize\",\"limit\":5}"
 ```
 
 PowerShell payloads are easier to maintain with `ConvertTo-Json`:
@@ -67,7 +66,7 @@ PowerShell payloads are easier to maintain with `ConvertTo-Json`:
 ```powershell
 cd "E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp"
 $payload = @{ query = "vector normalize"; limit = 5 } | ConvertTo-Json -Compress
-node .\dist\cli\run-core.js semantic_code_search $payload
+node .\dist\cli\run-core.js hybrid_code_search $payload
 ```
 
 ## Build
@@ -81,52 +80,19 @@ npm run build
 
 ## Runtime dependencies
 
-### Semantic embeddings
+### GitNexus
 
-Semantic search uses `Xenova/bge-base-en-v1.5` through `@huggingface/transformers`. Embeddings are 768-dimensional, mean-pooled, and L2-normalized before cosine search in Qdrant. Retrieval queries use the BGE search instruction prefix while indexed code chunks are embedded as passages.
+`npm install` installs GitNexus 1.6.12 and a project-local Node 24.21.0 runtime. The adapter invokes absolute executable and CLI paths without a shell, so repository paths with spaces and query text are passed as literal arguments. It does not install editor hooks or a second MCP server.
 
-The model tokenizer has a 512-token maximum input length. Tree-sitter therefore keeps semantic inputs focused on declarations such as functions, methods, classes, and types. Very large declarations can still exceed the model window, in which case later tokens are truncated by the embedding pipeline.
+`index_repository` maintains the local lexical index and invokes GitNexus `analyze --index-only --skip-git --drop-embeddings`. The graph indexes the exact managed folder, including non-Git folders. Analysis uses an 8 GiB heap cap and a 2 GiB database buffer pool (override with `GITNEXUS_LBUG_BUFFER_POOL_SIZE`). Embeddings are disabled; Qdrant and embedding models are no longer used by indexing, hybrid search, cleanup, or health checks. Existing Qdrant data is retained. The old Qdrant/embedding helper modules remain only for legacy maintenance and regression tests.
 
-The default semantic collection is `code_chunks_bge_base_en_v1_5`. Repository manifests store the active embedding model, dimensions, collection, pooling, normalization, query prefix, and chunking-schema version. If any of those settings change, the next non-verify index pass rebuilds semantic vectors even when source-file metadata is unchanged.
+All GitNexus registry, graph data, and analyzer identity cache are isolated under `INDEX_ROOT/gitnexus`, outside source repositories. GitNexus may install its native full-text extension on first analysis. Set `GITNEXUS_LBUG_EXTENSION_INSTALL=load-only` to prohibit installation after provisioning. `GITNEXUS_NODE_EXE` and `GITNEXUS_CLI_PATH` can override the installed runtime paths. On Windows, the adapter adds Git for Windows OpenSSL DLLs to the child search path; `GITNEXUS_DLL_DIR` provides an explicit override. It verifies full-text readiness and repairs missing indexes before reporting successful indexing. A `.gitnexusrc` setting that enables embeddings is rejected; use `embeddings: false`.
 
-Configuration:
+Hybrid search returns `gitnexus`, `lexical`, and `fused` arrays. Graph hits carry symbol locations, module names, and execution-flow context. The `semantic` array and standalone `semantic_code_search` command have been removed. Weighted reciprocal-rank fusion combines both sources (`HYBRID_GITNEXUS_WEIGHT` and `HYBRID_LEXICAL_WEIGHT`, both default 1.2). A graph failure is reported in `status.gitnexus` and `status.warnings`; lexical search still works.
 
-```text
-EMBEDDING_MODEL=Xenova/bge-base-en-v1.5
-EMBEDDING_DIMENSIONS=768
-EMBEDDING_CACHE_DIR=E:\mcp-index-data\models
-EMBEDDING_DEVICE=cpu
-EMBEDDING_BATCH_SIZE=16
-QDRANT_COLLECTION=code_chunks_bge_base_en_v1_5
-```
+After upgrading, re-run `index_repository` for existing repositories to build their graphs. Managed repositories with startup indexing enabled are migrated on the next server start. Other repositories can be indexed through the repository manager. Querying a repository before migration returns lexical results and a graph warning.
 
-`EMBEDDING_DEVICE` defaults to `cpu` for portability. The supported values are `cpu` and `dml`; on Windows, `dml` selects the DirectML ONNX backend. `auto` is intentionally not enabled because the tested Transformers.js 4.2.0 / ONNX Runtime 1.24.3 Windows stack can select an invalid DirectML provider combination. Device and batch-size settings affect runtime performance only and do not invalidate an existing semantic index because they do not change the model or vector semantics. Indexing combines chunks from multiple files in bounded, length-aware batches controlled by `EMBEDDING_BATCH_SIZE` to avoid both tiny per-file inference calls and excessive sequence padding.
-
-On the RTX 3080 Laptop GPU test machine, a 541-chunk DirectML benchmark measured about 110 chunks/s for BGE-small, 64 chunks/s for BGE-base, and 27-29 chunks/s for `jinaai/jina-embeddings-v2-base-code` with a 1024-token cap. On a 10-query repository retrieval check, BGE-base had the best MRR (0.825 versus 0.8125 for BGE-small and 0.7625 for Jina). Jina also exhausted DirectML memory on long 4k-6k-token batches without truncation, so BGE-base is the default quality-oriented model for this setup; BGE-small remains usable through environment overrides when indexing throughput is the priority.
-
-The model is downloaded on first use and cached under `EMBEDDING_CACHE_DIR`. If direct model download is unavailable on a machine with a local proxy on port 7890, Node can use it with:
-
-```powershell
-$env:NODE_USE_ENV_PROXY = "1"
-$env:HTTP_PROXY = "http://127.0.0.1:7890"
-$env:HTTPS_PROXY = "http://127.0.0.1:7890"
-```
-
-### Qdrant
-
-Expected local URL:
-
-`http://127.0.0.1:16333`
-
-Typical local installation on this machine:
-
-`E:\Program Files\qdrant`
-
-Quick check:
-
-```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:16333/collections
-```
+Coverage options in `.mcp-index.json` and MCP indexing requests govern the local lexical index. Explicit `extraExcludeGlobs` are also synchronized into a marked block in each repository's `.gitnexusignore`, preserving user rules; changing this block forces a graph rebuild. GitNexus uses its own language support and default ignore rules, so other coverage settings can differ between the two indexes. `mode=verify` checks lexical manifest freshness without rebuilding either index.
 
 ### ripgrep
 
@@ -160,7 +126,7 @@ node .\dist\cli\run-core.js index_repository $payload
 
 Behavior:
 
-- indexes semantic chunks into Qdrant
+- builds a GitNexus graph and full-text index without embeddings
 - writes per-repository manifests under `E:\mcp-index-data\repositories\<repoId>`
 - writes a per-repository local lexical index
 - uses incremental updates for unchanged, changed, and deleted indexed files by default
@@ -175,7 +141,7 @@ Behavior:
 | --- | --- |
 | `incremental` | Default. Reuses manifest metadata and only rebuilds indexed files that appear changed. |
 | `force` | Rebuilds all indexed candidate files regardless of manifest metadata. |
-| `verify` | Does not update Qdrant or local lexical artifacts. Reports manifest, coverage, Git, and optional hash verification diagnostics. |
+| `verify` | Does not update GitNexus or local lexical artifacts. Reports manifest, coverage, Git, and optional hash verification diagnostics. |
 
 Examples:
 
@@ -290,7 +256,7 @@ These warnings are diagnostic. They do not automatically search excluded files.
 
 - multiple repositories can be indexed side by side
 - search accepts an optional repo reference using repo id, repo name, or repo root
-- Qdrant points carry `repoId` metadata for repo-scoped semantic search
+- GitNexus queries use explicit repository paths, avoiding ambiguous folder names
 - lexical fallback indexes are stored per repository
 - `list_indexed_repositories` and `server_health` expose stored coverage and freshness metadata when available
 
@@ -299,7 +265,7 @@ Current machine data locations:
 - manifest and lexical index root: `E:\mcp-index-data`
 - repository registry: `E:\mcp-index-data\repositories.json`
 - per-repo manifests: `E:\mcp-index-data\repositories\<repoId>`
-- Qdrant vector storage: `E:\mcp-index-data\qdrant\storage`
+- GitNexus registry and graph storage: `E:\mcp-index-data\gitnexus`
 
 ## How this repo is intended to be used
 
@@ -310,13 +276,13 @@ This repository is intended to be consumed in one of two ways:
 
 In the current local setup, the ChatGPT-facing launcher is:
 
-`E:\Program Files\mcp\launch_windows_code_search_chatgpt_python.bat`
+`E:\Program Files\mcp\launch_mcp_server.bat`
 
 That launcher starts the Python MCP host, which shells out to this repository's CLI bridge.
 
 ## Current limitations
 
-- semantic search still uses a placeholder deterministic embedding function
+- a missing or busy GitNexus index temporarily falls back to lexical search with a warning
 - ripgrep may be absent on some Windows setups, but the local lexical fallback still keeps lexical search usable
 - Tree-sitter extraction supports JavaScript, TypeScript/TSX, Python, Go, Rust, Java, C, C++, C#, Ruby, and PHP; unsupported extra extensions still fall back to file-level chunks
 - query-time coverage warnings are heuristic

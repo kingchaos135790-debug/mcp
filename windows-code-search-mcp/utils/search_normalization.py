@@ -74,7 +74,7 @@ def normalize_search_result(result: object) -> object:
         return result
 
     normalized = dict(result)
-    for key in ("hits", "semantic", "lexical", "fused"):
+    for key in ("hits", "gitnexus", "lexical", "fused"):
         value = normalized.get(key)
         if isinstance(value, list):
             normalized[key] = [normalize_search_hit(item) for item in value]

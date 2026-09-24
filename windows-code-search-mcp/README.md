@@ -59,7 +59,7 @@ Operational notes:
 Search result normalization:
 
 - `hybrid_code_search` returns normalized `filePath` and `snippet` fields when available.
-- Hybrid search internally combines semantic and lexical search, adds `exact_matches` for strong live lexical matches, and annotates result sources such as `semantic_index`, `live_lexical`, and `hybrid_fused`.
+- Hybrid search internally combines GitNexus graph and lexical search, adds `exact_matches` for strong live lexical matches, and annotates result sources such as `gitnexus_index`, `live_lexical`, and `hybrid_fused`.
 - Search result locations are navigation hints; use `get_file_range` to obtain fresh numbered lines before editing.
 
 ### Direct edit workflow
@@ -99,9 +99,7 @@ Desktop/UI automation tools such as `Screenshot`, `Snapshot`, `Click`, `Type`, `
 
 `launch_windows_code_search_chatgpt_python.bat` now:
 
-- validates the integrated server, Windows-MCP, search engine, and Qdrant paths
-- starts Qdrant automatically through `E:\\Program Files\\qdrant\\start-qdrant.bat` if it is not already reachable on `http://127.0.0.1:16333`
-- uses `E:\\Program Files\\qdrant\\config\\local.yaml` so Qdrant stores vectors under `E:\\mcp-index-data\\qdrant`
+- validates the integrated server, Windows-MCP, search engine, and project-local GitNexus runtime paths
 - exports `QDRANT_URL`, `QDRANT_COLLECTION`, and `INDEX_ROOT`
 - sets `INDEX_ROOT=E:\\mcp-index-data` for search manifests and local lexical indexes
 - builds the TypeScript search core before starting the Python MCP host
@@ -126,7 +124,9 @@ The integrated MCP exposes these search-side tools:
 - `remove_indexed_repository`
 - `list_indexed_repositories`
 
-`hybrid_code_search` is the single agent-facing code-search entry point. It internally combines semantic and lexical retrieval, supplements live lexical matches, and reranks fused results before returning them.
+`hybrid_code_search` is the single agent-facing code-search entry point. It internally combines GitNexus graph and lexical retrieval, supplements live lexical matches, and reranks fused results before returning them.
+
+The graph lane replaces Qdrant semantic retrieval. Responses use `gitnexus` and `gitnexusCandidates` instead of `semantic` and `semanticCandidates`; symbol locations and execution-flow context are preserved. No embedding model or Qdrant service is required. Indexing has a separate `SEARCH_INDEX_TIMEOUT_SECONDS` budget (default at least 2160 seconds); searches keep `SEARCH_ENGINE_TIMEOUT_SECONDS`. Missing or locked graph indexes produce a warning and lexical results. Restart the MCP server after updating so its tool description and response normalization reload. Startup indexing builds GitNexus graphs for enabled repositories; use the repository manager to migrate repositories with startup indexing disabled.
 
 `add_indexed_repository` enrolls or updates a managed repository without restarting the MCP server. By default it indexes immediately (`index_now=true`), enables file watching (`watch=true`), and refreshes the active watcher after the repository is saved. It also exposes the managed coverage options used by startup and watch indexing.
 
@@ -139,10 +139,12 @@ Lower-level index diagnostics remain runtime or external index-management operat
 Current hybrid-search caveat:
 
 - if indexed test files contain the exact query text, lexical hits from `tests/` can still outrank the product code
-- wrapper reranking reduces semantic helper drift, but it does not replace index-time exclusion rules for `tests/`, generated files, or other non-product content
+- wrapper reranking reduces irrelevant helper matches, but it does not replace index-time exclusion rules for `tests/`, generated files, or other non-product content
 - for the cleanest results, prefer repo scoping and appropriate index coverage/exclusion settings
 
 ## Auto indexing workflow
+
+The file watcher excludes this server's logs, repository status file, OAuth state file, and index artifacts to avoid indexing loops when the MCP workspace is itself managed.
 
 The auto-indexer runtime remains enabled because it owns startup indexing and file-change incremental reindexing. Removing that runtime would disable automatic reindexing when watched repositories change.
 
@@ -165,7 +167,7 @@ Search/index data locations on this machine:
 
 - managed repo config: `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
 - manifest and lexical index root: `E:\\mcp-index-data`
-- Qdrant vector storage root: `E:\\mcp-index-data\\qdrant`
+- GitNexus graph and registry root: `E:\mcp-index-data\gitnexus`
 
 ## Authentication, restart behavior, and multi-chat isolation
 
@@ -288,9 +290,9 @@ This protects connector/auth state across concurrent chats. It does not make Win
 Recommended architecture:
 
 1. Keep search and indexing as shared infrastructure.
-   - Qdrant
+   - GitNexus graph indexes
    - repo manifests
-   - lexical and semantic search
+   - lexical and GitNexus graph search
    - repo add/remove/index operations guarded by locks
 2. Move interactive runtime state behind a per-chat or per-session runtime.
    - desktop automation

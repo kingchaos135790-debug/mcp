@@ -86,13 +86,18 @@ class SearchEngineBridge:
                 f"Expected: {self.entrypoint}. Run npm run build in {self.search_engine_dir}."
             )
 
+        timeout_seconds = self.config.engine_timeout_seconds
+        if command_name == "index_repository":
+            timeout_seconds = int(os.getenv("SEARCH_INDEX_TIMEOUT_SECONDS", str(max(2160, timeout_seconds))))
         try:
             completed = subprocess.run(
                 [self.config.node_exe, str(self.entrypoint), command_name, json.dumps(payload)],
                 cwd=str(self.search_engine_dir),
                 capture_output=True,
                 text=True,
-                timeout=self.config.engine_timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_seconds,
                 check=False,
                 env=os.environ.copy(),
             )
@@ -106,7 +111,7 @@ class SearchEngineBridge:
                 stdout=exc.stdout,
                 stderr=exc.stderr,
             )
-            raise RuntimeError(f"{command_name} timed out after {self.config.engine_timeout_seconds}s") from exc
+            raise RuntimeError(f"{command_name} timed out after {timeout_seconds}s") from exc
 
         stdout_text = completed.stdout or ""
         stderr_text = completed.stderr or ""
@@ -146,7 +151,7 @@ class SearchEngineBridge:
                     "status": "empty_engine_output",
                     "message": (
                         f"Search engine exited successfully (code 0) but produced no stdout for {command_name}. "
-                        "Possible causes: missing index, Qdrant connectivity issue, or query parsing failure that exits cleanly."
+                        "Possible causes: missing index, GitNexus index availability issue, or query parsing failure that exits cleanly."
                     ),
                     "stderr": stderr_hint or None,
                 },

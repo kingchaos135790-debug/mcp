@@ -36,20 +36,20 @@ def compact_hybrid_search_result(
     result: dict[str, object],
     *,
     limit: int,
-    semantic_candidates: int,
+    gitnexus_candidates: int,
     lexical_candidates: int,
     fused_candidates: int,
 ) -> None:
     raw_section_limit = min(max(1, limit), _SEARCH_RESPONSE_RAW_SECTION_LIMIT)
-    result["semantic"] = _compact_search_hits(result.get("semantic"), raw_section_limit)
+    result["gitnexus"] = _compact_search_hits(result.get("gitnexus"), raw_section_limit)
     result["lexical"] = _compact_search_hits(result.get("lexical"), raw_section_limit)
     result["exact_matches"] = _compact_search_hits(result.get("exact_matches"), limit)
     result["fused"] = _compact_search_hits(result.get("fused"), limit)
     result["resultCounts"] = {
-        "semanticCandidates": semantic_candidates,
+        "gitnexusCandidates": gitnexus_candidates,
         "lexicalCandidates": lexical_candidates,
         "fusedCandidates": fused_candidates,
-        "returnedSemantic": len(result["semantic"]),
+        "returnedGitNexus": len(result["gitnexus"]),
         "returnedLexical": len(result["lexical"]),
         "returnedExactMatches": len(result["exact_matches"]),
         "returnedFused": len(result["fused"]),
@@ -66,6 +66,7 @@ def _compact_repository_health(repository: object) -> object:
         "repoRoot",
         "indexedAt",
         "fileCount",
+        "gitnexusIndex",
         "status",
         "watch",
         "autoIndexOnStart",

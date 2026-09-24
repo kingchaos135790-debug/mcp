@@ -34,6 +34,7 @@ export type RepoIndexManifest = {
   fileCount: number;
   coverage?: RepoIndexCoverage;
   freshnessStrategy?: string;
+  gitnexusIndex?: { backend: "gitnexus"; repo: string; embeddings: false; indexedAt: string };
   semanticIndex?: {
     model: string;
     dimensions: number;

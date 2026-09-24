@@ -26,6 +26,7 @@ const DEFAULT_MAX_SOURCE_FILE_BYTES = Number.parseInt(process.env.MAX_SOURCE_FIL
 const ALWAYS_IGNORED_GLOBS = [
     "**/node_modules/**",
     "**/.git/**",
+    "**/.gitnexus/**",
     "**/vendor/**",
     "**/vendors/**",
     "**/third_party/**",

@@ -321,7 +321,7 @@ def _clarify_generated_path_warnings(result: dict[str, object]) -> None:
         clarified.append(warning)
         if "generated or build output" in text and "lexical ripgrep" not in text.lower():
             clarified.append(
-                "Semantic index coverage may exclude generated/build paths, but live lexical ripgrep results can still include generated files present on disk; check each hit's resultSource."
+                "GitNexus index coverage may exclude generated/build paths, but live lexical ripgrep results can still include generated files present on disk; check each hit's resultSource."
             )
     status["warnings"] = clarified
 
@@ -361,7 +361,7 @@ def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | 
         snippet_overlap = _token_overlap(snippet, feature_tokens)
         source = str(item.get("source") or "").strip().lower()
         sources = {str(value).strip().lower() for value in item.get("sources", [])} if isinstance(item.get("sources"), list) else set()
-        source_agreement = 1 if source == "hybrid" or {"semantic", "lexical"}.issubset(sources) else 0
+        source_agreement = 1 if source == "hybrid" or {"gitnexus", "lexical"}.issubset(sources) else 0
         fusion_score = float(item.get("fusionScore") or 0.0)
         score = float(item.get("score") or 0.0)
         return (
@@ -452,7 +452,7 @@ class SearchExtension:
     def register(self, mcp: FastMCP, context: ServerContext) -> None:
         @mcp.tool(
             name="hybrid_code_search",
-            description="Combine Qdrant semantic search with ripgrep or local lexical search.",
+            description="Combine GitNexus graph search with ripgrep or local lexical search.",
             annotations=ToolAnnotations(
                 title="hybrid_code_search",
                 readOnlyHint=True,
@@ -468,10 +468,10 @@ class SearchExtension:
                 run_engine_tool(context, "hybrid_code_search", {"query": query, "limit": candidate_limit, "repo": repo})
             )
             if isinstance(result, dict):
-                semantic = result.get("semantic")
+                gitnexus = result.get("gitnexus")
                 fused = result.get("fused")
                 lexical = result.get("lexical")
-                semantic_candidates = len(semantic) if isinstance(semantic, list) else 0
+                gitnexus_candidates = len(gitnexus) if isinstance(gitnexus, list) else 0
                 fused_candidates = len(fused) if isinstance(fused, list) else 0
                 lexical_hits = _supplement_lexical_hits(
                     context,
@@ -481,7 +481,7 @@ class SearchExtension:
                     lexical if isinstance(lexical, list) else None,
                 )
                 lexical_candidates = len(lexical_hits)
-                _annotate_result_sources(semantic, "semantic_index")
+                _annotate_result_sources(gitnexus, "gitnexus_index")
                 _annotate_result_sources(lexical_hits, "live_lexical")
                 result["lexical"] = lexical_hits
                 result["exact_matches"] = _extract_exact_matches(query, lexical_hits, limit)
@@ -492,7 +492,7 @@ class SearchExtension:
                 _compact_hybrid_search_result(
                     result,
                     limit=limit,
-                    semantic_candidates=semantic_candidates,
+                    gitnexus_candidates=gitnexus_candidates,
                     lexical_candidates=lexical_candidates,
                     fused_candidates=fused_candidates,
                 )

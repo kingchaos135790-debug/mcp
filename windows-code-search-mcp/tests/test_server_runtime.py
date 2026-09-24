@@ -82,6 +82,16 @@ class SearchEngineBridgeTests(unittest.TestCase):
     def test_parse_json_output_allows_none(self) -> None:
         self.assertEqual(self.bridge._parse_json_output(None), {})
 
+    def test_run_tool_decodes_unicode_independent_of_windows_locale(self) -> None:
+        self.bridge.config.node_exe = sys.executable
+        expected = {"symbol": "search \u2192 \u4ee3\u7801"}
+        encoded = json.dumps(expected, ensure_ascii=False).encode("utf-8")
+        self.bridge.entrypoint.write_text(
+            f"import sys\nsys.stdout.buffer.write({encoded!r})\n", encoding="utf-8"
+        )
+        with patch("subprocess._text_encoding", return_value="gbk"):
+            self.assertEqual(self.bridge.run_tool("hybrid_code_search", {}), expected)
+
     def test_run_tool_returns_empty_dict_for_none_stdout(self) -> None:
         completed = SimpleNamespace(stdout=None, stderr="", returncode=0)
 
@@ -124,6 +134,14 @@ class RepositoryAutoIndexerTests(unittest.TestCase):
             Config(search_engine_dir=self.tempdir.name, managed_repositories_path=str(self.config_path)),
             SimpleNamespace(),
         )
+
+    def test_watcher_ignores_its_own_logs_and_status_writes(self) -> None:
+        root = Path(self.tempdir.name)
+        with patch.dict("os.environ", {"MCP_LOG_DIR": str(root / "logs")}):
+            self.assertTrue(self.indexer._is_runtime_artifact(str(root / "logs" / "runtime.log")))
+            self.assertTrue(self.indexer._is_runtime_artifact(str(self.config_path)))
+            self.assertTrue(self.indexer._is_runtime_artifact(str(root / ".gitnexus" / "meta.json")))
+            self.assertFalse(self.indexer._is_runtime_artifact(str(root / "src" / "app.py")))
 
     def test_load_repositories_repairs_empty_config(self) -> None:
         self.config_path.write_text("", encoding="utf-8")

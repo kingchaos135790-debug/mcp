@@ -177,7 +177,7 @@ class SearchRerankTests(unittest.TestCase):
     def test_rerank_prefers_lexical_and_feature_overlap(self) -> None:
         fused = [
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": "server_runtime.py",
                 "symbol": "ensure_config_file",
                 "content": "async def ensure_config_file(self) -> None:",
@@ -192,21 +192,21 @@ class SearchRerankTests(unittest.TestCase):
         ]
         lexical = [{"filePath": "extensions/search.py", "text": 'name="hybrid_code_search"'}]
 
-        reranked = _rerank_fused_hits("qdrant semantic search", fused, lexical, limit=5)
+        reranked = _rerank_fused_hits("qdrant gitnexus search", fused, lexical, limit=5)
 
         self.assertEqual(reranked[0]["filePath"], "extensions/search.py")
 
-    def test_rerank_filters_semantic_only_drift_when_no_feature_tokens_match(self) -> None:
+    def test_rerank_filters_gitnexus_only_drift_when_no_feature_tokens_match(self) -> None:
         fused = [
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": "server_runtime.py",
                 "symbol": "ensure_config_file",
                 "content": "async def ensure_config_file(self) -> None:",
                 "score": 0.99,
             },
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": "extensions/vscode_sessions.py",
                 "symbol": "create_vscode_session",
                 "content": "def create_vscode_session(workspace_root: str, active_file: str) -> str:",
@@ -222,14 +222,14 @@ class SearchRerankTests(unittest.TestCase):
     def test_rerank_penalizes_generated_output_when_source_exists(self) -> None:
         fused = [
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": "vscode-bridge-extension/out/bridgeClient.js",
                 "symbol": "normalizeBaseUrl",
                 "content": "normalizeBaseUrl(baseUrl) { return (baseUrl?.trim() || this.baseUrl).replace(/\\/$/, ''); }",
                 "score": 0.8,
             },
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": "vscode-bridge-extension/src/bridgeClient.ts",
                 "symbol": "create_vscode_session",
                 "content": "function create_vscode_session(workspaceRoot: string, activeFile: string): void {}",
@@ -245,15 +245,15 @@ class SearchRerankTests(unittest.TestCase):
     def test_rerank_prefers_hybrid_agreement_and_fusion_score_for_equal_query_matches(self) -> None:
         fused = [
             {
-                "source": "semantic",
-                "filePath": "src/semantic_only.py",
+                "source": "gitnexus",
+                "filePath": "src/gitnexus_only.py",
                 "symbol": "resolve_query",
                 "content": "resolve_query handles the request",
                 "score": 0.99,
             },
             {
                 "source": "hybrid",
-                "sources": ["semantic", "lexical"],
+                "sources": ["gitnexus", "lexical"],
                 "fusionScore": 0.8,
                 "filePath": "src/hybrid.py",
                 "symbol": "resolve_query",
@@ -262,7 +262,7 @@ class SearchRerankTests(unittest.TestCase):
             },
         ]
         lexical = [
-            {"filePath": "src/semantic_only.py", "text": "resolve_query handles the request"},
+            {"filePath": "src/gitnexus_only.py", "text": "resolve_query handles the request"},
             {"filePath": "src/hybrid.py", "text": "resolve_query handles the request"},
         ]
 
@@ -273,14 +273,14 @@ class SearchRerankTests(unittest.TestCase):
     def test_rerank_promotes_exact_lexical_hit_when_fused_omits_it(self) -> None:
         fused = [
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": "config/models.py",
                 "symbol": "Transport",
                 "content": "class Transport(str, Enum):",
                 "score": 0.99,
             },
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": "tests/test_extensions_refactor.py",
                 "symbol": "get_session_snapshot",
                 "content": "def get_session_snapshot(session_id: str) -> dict[str, object]:",
@@ -372,7 +372,7 @@ class SearchRerankTests(unittest.TestCase):
         self.assertEqual(exact[0]["matchKind"], "exact_lexical")
         self.assertEqual(exact[0]["resultSource"], "live_lexical")
 
-    def test_generated_path_warning_explains_semantic_vs_live_lexical_coverage(self) -> None:
+    def test_generated_path_warning_explains_gitnexus_vs_live_lexical_coverage(self) -> None:
         payload = {
             "status": {
                 "warnings": [
@@ -420,7 +420,7 @@ class SearchRerankTests(unittest.TestCase):
         long_text = "alpha " + ("x" * 2000)
         candidates = [
             {
-                "source": "semantic",
+                "source": "gitnexus",
                 "filePath": f"src/file_{index}.py",
                 "symbol": f"alpha_{index}",
                 "content": long_text,
@@ -433,7 +433,7 @@ class SearchRerankTests(unittest.TestCase):
             if tool_name == "hybrid_code_search":
                 self.assertEqual(payload["limit"], 32)
                 return {
-                    "semantic": [dict(item) for item in candidates],
+                    "gitnexus": [dict(item) for item in candidates],
                     "lexical": [
                         {
                             "filePath": item["filePath"],
@@ -460,15 +460,15 @@ class SearchRerankTests(unittest.TestCase):
         finally:
             search_module.run_engine_tool = original_run_engine_tool
 
-        self.assertEqual(len(result["semantic"]), 3)
+        self.assertEqual(len(result["gitnexus"]), 3)
         self.assertEqual(len(result["lexical"]), 3)
         self.assertLessEqual(len(result["exact_matches"]), 8)
         self.assertEqual(len(result["fused"]), 8)
-        self.assertEqual(result["resultCounts"]["semanticCandidates"], 20)
+        self.assertEqual(result["resultCounts"]["gitnexusCandidates"], 20)
         self.assertEqual(result["resultCounts"]["lexicalCandidates"], 20)
         self.assertEqual(result["resultCounts"]["fusedCandidates"], 20)
-        self.assertIn("[truncated ", result["semantic"][0]["content"])
-        self.assertLess(len(result["semantic"][0]["content"]), len(long_text))
+        self.assertIn("[truncated ", result["gitnexus"][0]["content"])
+        self.assertLess(len(result["gitnexus"][0]["content"]), len(long_text))
         self.assertLess(len(json.dumps(result)), 30_000)
 
     def test_server_health_compaction_removes_large_repository_details(self) -> None:

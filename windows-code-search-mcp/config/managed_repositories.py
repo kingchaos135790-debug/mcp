@@ -45,12 +45,9 @@ def format_index_result_summary(result: dict[str, object]) -> str:
     unchanged_files = coerce_int(result.get("unchangedFiles", 0))
     deleted_files = coerce_int(result.get("deletedFiles", 0))
 
-    qdrant_value = result.get("qdrant")
-    qdrant = qdrant_value if isinstance(qdrant_value, dict) else {}
-    upserted_points = coerce_int(qdrant.get("upsertedPoints", 0))
-    deleted_points = coerce_int(qdrant.get("deletedPoints", 0))
-
+    graph_value = result.get("gitnexus")
+    graph = graph_value if isinstance(graph_value, dict) else {}
     return (
         f"files={indexed_files} changed={changed_files} unchanged={unchanged_files} "
-        f"deleted={deleted_files} qdrant_upserted={upserted_points} qdrant_deleted={deleted_points}"
+        f"deleted={deleted_files} gitnexus={graph.get('backend', 'unavailable')}"
     )

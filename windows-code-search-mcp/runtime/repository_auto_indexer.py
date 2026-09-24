@@ -244,6 +244,8 @@ class RepositoryAutoIndexer:
             ):
                 affected_roots = set()
                 for _, changed_path in changes:
+                    if self._is_runtime_artifact(changed_path):
+                        continue
                     for repo_root in watch_roots:
                         if path_is_within(changed_path, repo_root):
                             affected_roots.add(repo_root)
@@ -263,6 +265,20 @@ class RepositoryAutoIndexer:
             raise
         except Exception:
             logger.exception("Repository watcher stopped unexpectedly")
+
+    def _is_runtime_artifact(self, changed_path: str) -> bool:
+        """Avoid reindex loops when this server is itself a managed repository."""
+        candidate = Path(changed_path).resolve()
+        if ".gitnexus" in candidate.parts:
+            return True
+        ignored_directories = (
+            Path(os.getenv("MCP_LOG_DIR", str(Path(__file__).resolve().parents[2] / "logs"))).resolve(),
+            Path(index_root_display()).resolve(),
+        )
+        if any(candidate.is_relative_to(directory) for directory in ignored_directories):
+            return True
+        ignored_files = [self.config.managed_repositories_path, getattr(self.config, "oauth_state_path", "")]
+        return any(candidate == Path(filename).resolve() for filename in ignored_files if filename)
 
     async def run_startup_indexing(self) -> None:
         repositories = await self.load_repositories()

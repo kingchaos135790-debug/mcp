@@ -17,18 +17,7 @@ rem ===== Paths — adjust for your machine =====
 set "MCP_DIR=%MCP_ROOT%\windows-code-search-mcp"
 set "WINDOWS_MCP_DIR=%MCP_ROOT%\Windows-MCP"
 set "SEARCH_ENGINE_DIR=%MCP_ROOT%\ripgrep-treesitter-qdrant-mcp"
-set "QDRANT_ROOT=C:\path\to\qdrant"
-set "QDRANT_EXE=%QDRANT_ROOT%\qdrant.exe"
-set "QDRANT_START_BAT=%QDRANT_ROOT%\start-qdrant.bat"
-set "QDRANT_CONFIG_PATH=%QDRANT_ROOT%\config\local.yaml"
-set "QDRANT_URL=http://127.0.0.1:16333"
-set "QDRANT_COLLECTION=code_chunks_bge_base_en_v1_5"
 set "INDEX_ROOT=C:\mcp-index-data"
-set "EMBEDDING_MODEL=Xenova/bge-base-en-v1.5"
-set "EMBEDDING_DIMENSIONS=768"
-set "EMBEDDING_CACHE_DIR=%INDEX_ROOT%\models"
-set "EMBEDDING_DEVICE=dml"
-set "EMBEDDING_BATCH_SIZE=16"
 set "AUTO_INDEX_CONFIG_PATH=%MCP_DIR%\managed-repositories.json"
 set "PYTHON_EXE=%WINDOWS_MCP_DIR%\.venv\Scripts\python.exe"
 set "MCP_HOST=127.0.0.1"
@@ -104,24 +93,6 @@ if not exist "%PYTHON_EXE%" (
   exit /b 1
 )
 
-if not exist "%QDRANT_EXE%" (
-  call :log "ERROR: Qdrant executable not found: %QDRANT_EXE%"
-  pause
-  exit /b 1
-)
-
-if not exist "%QDRANT_CONFIG_PATH%" (
-  call :log "ERROR: Qdrant config not found: %QDRANT_CONFIG_PATH%"
-  pause
-  exit /b 1
-)
-
-if not exist "%QDRANT_START_BAT%" (
-  call :log "ERROR: Qdrant launcher not found: %QDRANT_START_BAT%"
-  pause
-  exit /b 1
-)
-
 rem ===== OAuth server-side config =====
 rem Set OAUTH_ENABLED=true and fill in the values below to enable OAuth.
 set "OAUTH_ENABLED=true"
@@ -137,8 +108,6 @@ if "%OAUTH_STATE_MAX_TOKENS%"=="" set "OAUTH_STATE_MAX_TOKENS=50"
 
 set "WINDOWS_MCP_DIR=%WINDOWS_MCP_DIR%"
 set "SEARCH_ENGINE_DIR=%SEARCH_ENGINE_DIR%"
-set "QDRANT_URL=%QDRANT_URL%"
-set "QDRANT_COLLECTION=%QDRANT_COLLECTION%"
 set "INDEX_ROOT=%INDEX_ROOT%"
 set "AUTO_INDEX_CONFIG_PATH=%AUTO_INDEX_CONFIG_PATH%"
 set "VSCODE_BRIDGE_PORT=%VSCODE_BRIDGE_PORT%"
@@ -150,7 +119,6 @@ call :log "OAuth base URL: %OAUTH_BASE_URL%"
 call :log "Auto-index config: %AUTO_INDEX_CONFIG_PATH%"
 call :log "Search engine dir: %SEARCH_ENGINE_DIR%"
 call :log "Windows-MCP dir: %WINDOWS_MCP_DIR%"
-call :log "Qdrant URL: %QDRANT_URL%"
 
 call :log "Checking for an existing MCP launcher on TCP port %MCP_PORT%"
 call :release_mcp_port
@@ -161,15 +129,17 @@ if errorlevel 1 (
 )
 call :log "TCP port %MCP_PORT% is available"
 
-call :log "Checking Qdrant at %QDRANT_URL%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$url='%QDRANT_URL%/collections'; $ok=$false; try { Invoke-WebRequest -UseBasicParsing $url | Out-Null; $ok=$true } catch {}; if (-not $ok) { Write-Host '[INFO] Qdrant is not reachable yet. Starting it now...'; Start-Process -FilePath '%QDRANT_START_BAT%' -WorkingDirectory '%QDRANT_ROOT%' -WindowStyle Minimized | Out-Null; }; for ($i = 0; $i -lt 15 -and -not $ok; $i++) { Start-Sleep -Seconds 2; try { Invoke-WebRequest -UseBasicParsing $url | Out-Null; $ok=$true } catch {} }; if ($ok) { Write-Host '[INFO] Qdrant is ready.'; exit 0 } else { Write-Host '[ERROR] Qdrant could not be started after waiting for it to become reachable.'; exit 1 }"
-if errorlevel 1 (
-  call :log "ERROR: Qdrant is required for semantic search/indexing"
+if not exist "%SEARCH_ENGINE_DIR%\node_modules\gitnexus\dist\cli\index.js" (
+  call :log "ERROR: GitNexus is missing. Run npm install in the search engine directory."
   pause
   exit /b 1
 )
-call :log "Qdrant readiness check completed"
+if not exist "%SEARCH_ENGINE_DIR%\node_modules\node\bin\node.exe" (
+  call :log "ERROR: GitNexus Node runtime is missing. Run npm install in the search engine directory."
+  pause
+  exit /b 1
+)
+call :log "Search backend: GitNexus graph plus lexical search"
 
 call :log "Checking whether the search engine core needs a rebuild"
 pushd "%SEARCH_ENGINE_DIR%"

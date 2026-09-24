@@ -1,31 +1,22 @@
 ﻿import path from "node:path";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { clampLimit, getSearchEngineConfig } from "./config.js";
 import { listIndexedRepositories, readRepoManifest, resolveRepository } from "./repository-store.js";
-import { checkQdrantConnection, semanticSearch } from "../lib/qdrant-utils.js";
+import { queryGitNexus, gitNexusHealth } from "../lib/gitnexus-utils.js";
 import { readLocalLexicalIndex, searchLocalLexicalDocuments } from "../lib/local-lexical-utils.js";
 import { hasRipgrep, queryRipgrep } from "../lib/ripgrep-utils.js";
-import { getEmbeddingRuntimeConfig } from "../lib/embedding-utils.js";
 
-function formatSemantic(hit: any) {
-  return {
-    score: hit.score,
-    ...(hit.payload || {}),
-  };
-}
-
-type FusionSource = "semantic" | "lexical";
+type FusionSource = "gitnexus" | "lexical";
 
 type FusedCandidate = {
   result: any;
   score: number;
   sources: Set<FusionSource>;
-  semanticRank?: number;
+  gitnexusRank?: number;
   lexicalRank?: number;
 };
 
 const HYBRID_RRF_K = parsePositiveNumber(process.env.HYBRID_RRF_K, 60);
-const HYBRID_SEMANTIC_WEIGHT = parsePositiveNumber(process.env.HYBRID_SEMANTIC_WEIGHT, 1);
+const HYBRID_GITNEXUS_WEIGHT = parsePositiveNumber(process.env.HYBRID_GITNEXUS_WEIGHT, 1.2);
 const HYBRID_LEXICAL_WEIGHT = parsePositiveNumber(process.env.HYBRID_LEXICAL_WEIGHT, 1.2);
 
 function parsePositiveNumber(value: string | undefined, fallback: number): number {
@@ -34,7 +25,7 @@ function parsePositiveNumber(value: string | undefined, fallback: number): numbe
 }
 
 function normalizeResultPath(result: any): string {
-  return String(result.path || result.file || "")
+  return String(result.filePath || result.path || result.file || "")
     .replace(/^\.([\\/])/, "")
     .replace(/\\/g, "/")
     .toLowerCase();
@@ -108,7 +99,7 @@ function mergeResultFields(primary: any, secondary: any): any {
   return merged;
 }
 
-export function fuseResults(semantic: any[], lexical: any[], limit = 8) {
+export function fuseResults(gitnexus: any[], lexical: any[], limit = 8) {
   const candidates: FusedCandidate[] = [];
 
   const addResult = (result: any, source: FusionSource, rank: number, weight: number) => {
@@ -125,28 +116,29 @@ export function fuseResults(semantic: any[], lexical: any[], limit = 8) {
         sources: new Set<FusionSource>(),
       };
       candidates.push(candidate);
-    } else if (source === "semantic") {
+    } else if (source === "gitnexus") {
       candidate.result = mergeResultFields(result, candidate.result);
     } else {
       candidate.result = mergeResultFields(candidate.result, result);
     }
 
+    if (candidate.sources.has(source)) return;
     candidate.score += reciprocalRank(rank, weight);
     candidate.sources.add(source);
-    if (source === "semantic") {
-      candidate.semanticRank = Math.min(candidate.semanticRank ?? rank, rank);
+    if (source === "gitnexus") {
+      candidate.gitnexusRank = Math.min(candidate.gitnexusRank ?? rank, rank);
     } else {
       candidate.lexicalRank = Math.min(candidate.lexicalRank ?? rank, rank);
     }
   };
 
-  semantic.forEach((result, index) => addResult(result, "semantic", index + 1, HYBRID_SEMANTIC_WEIGHT));
+  gitnexus.forEach((result, index) => addResult(result, "gitnexus", index + 1, HYBRID_GITNEXUS_WEIGHT));
   lexical.forEach((result, index) => addResult(result, "lexical", index + 1, HYBRID_LEXICAL_WEIGHT));
 
-  const maxScore = (HYBRID_SEMANTIC_WEIGHT + HYBRID_LEXICAL_WEIGHT) / (HYBRID_RRF_K + 1);
+  const maxScore = (HYBRID_GITNEXUS_WEIGHT + HYBRID_LEXICAL_WEIGHT) / (HYBRID_RRF_K + 1);
   return candidates
     .sort((a, b) => b.score - a.score
-      || (a.semanticRank ?? Number.MAX_SAFE_INTEGER) - (b.semanticRank ?? Number.MAX_SAFE_INTEGER)
+      || (a.gitnexusRank ?? Number.MAX_SAFE_INTEGER) - (b.gitnexusRank ?? Number.MAX_SAFE_INTEGER)
       || (a.lexicalRank ?? Number.MAX_SAFE_INTEGER) - (b.lexicalRank ?? Number.MAX_SAFE_INTEGER))
     .slice(0, Math.max(1, limit))
     .map((candidate) => ({
@@ -154,22 +146,9 @@ export function fuseResults(semantic: any[], lexical: any[], limit = 8) {
       source: candidate.sources.size > 1 ? "hybrid" : Array.from(candidate.sources)[0],
       sources: Array.from(candidate.sources),
       fusionScore: Number((candidate.score / maxScore).toFixed(6)),
-      semanticRank: candidate.semanticRank,
+      gitnexusRank: candidate.gitnexusRank,
       lexicalRank: candidate.lexicalRank,
     }));
-}
-
-function buildRepoFilter(repoId: string): Record<string, unknown> {
-  return {
-    must: [
-      {
-        key: "repoId",
-        match: {
-          value: repoId,
-        },
-      },
-    ],
-  };
 }
 
 type CaseMode = "smart" | "ignore" | "sensitive";
@@ -343,21 +322,6 @@ async function resolveLocalLexicalSearch(targetRepositories: any[], repositories
   };
 }
 
-export async function semanticCodeSearch(query: string, limit?: number, repo?: string) {
-  const config = getSearchEngineConfig();
-  const qdrant = new QdrantClient({ url: config.qdrantUrl });
-  const cappedLimit = clampLimit(limit);
-  const repository = await resolveRepository(config, repo);
-  const hits = await semanticSearch(
-    qdrant,
-    config.qdrantCollection,
-    String(query),
-    cappedLimit,
-    repository ? buildRepoFilter(repository.repoId) : undefined,
-  );
-  return hits.map(formatSemantic);
-}
-
 export async function lexicalCodeSearch(query: string, limit?: number, repo?: string, caseMode?: string) {
   const cappedLimit = clampLimit(limit);
   return resolveLexicalSearch(String(query), cappedLimit, repo, normalizeCaseMode(caseMode));
@@ -365,41 +329,47 @@ export async function lexicalCodeSearch(query: string, limit?: number, repo?: st
 
 export async function hybridCodeSearch(query: string, limit?: number, repo?: string) {
   const config = getSearchEngineConfig();
-  const embedding = getEmbeddingRuntimeConfig();
-  const qdrant = new QdrantClient({ url: config.qdrantUrl });
-  const cappedLimit = clampLimit(limit);
+  const cappedLimit = clampLimit(limit, 8, 50);
   const repository = await resolveRepository(config, repo);
-  const semantic = await semanticSearch(
-    qdrant,
-    config.qdrantCollection,
-    String(query),
-    cappedLimit,
-    repository ? buildRepoFilter(repository.repoId) : undefined,
-  );
-  const formattedSemantic = semantic.map(formatSemantic);
+  const repositories = repository ? [repository] : await listIndexedRepositories(config);
   const lexical = await resolveLexicalSearch(String(query), cappedLimit, repo);
-
+  const graphHits: any[][] = [];
+  const warnings: string[] = [...(lexical.status.warnings || [])];
+  const graphStatus = [];
+  // Bound native database concurrency and interleave repositories before fusion.
+  for (const target of repositories) {
+    try {
+      const graph = await queryGitNexus(target, String(query), cappedLimit);
+      graphHits.push(graph.hits);
+      if (graph.warning) warnings.push(`${target.repoName}: ${graph.warning}`);
+      graphStatus.push({ repoId: target.repoId, available: true, degraded: Boolean(graph.warning) });
+    } catch (error: any) {
+      graphStatus.push({ repoId: target.repoId, available: false, message: error.message });
+      warnings.push(`${target.repoName}: ${error.message}. Keyword search remains available; re-run index_repository if the graph is missing or stale.`);
+    }
+  }
+  const gitnexus: any[] = [];
+  for (let rank = 0; rank < cappedLimit; rank += 1) {
+    for (const hits of graphHits) if (hits[rank]) gitnexus.push(hits[rank]);
+  }
   return {
-    semantic: formattedSemantic,
+    gitnexus: gitnexus.slice(0, cappedLimit),
     lexical: lexical.hits,
-    fused: fuseResults(formattedSemantic, lexical.hits, cappedLimit),
+    fused: fuseResults(gitnexus, lexical.hits, cappedLimit),
     status: {
-      qdrantCollection: config.qdrantCollection,
-      embedding: {
-        model: embedding.model,
-        dimensions: embedding.dimensions,
-        pooling: embedding.pooling,
-        normalized: embedding.normalized,
-      },
+      ...lexical.status,
+      searchBackend: "gitnexus+lexical",
+      gitnexus: graphStatus,
+      embeddings: false,
       repoFilter: repository?.repoId,
       lexicalBackend: lexical.backend,
       fusion: {
         algorithm: "weighted_rrf",
         rrfK: HYBRID_RRF_K,
-        semanticWeight: HYBRID_SEMANTIC_WEIGHT,
+        gitnexusWeight: HYBRID_GITNEXUS_WEIGHT,
         lexicalWeight: HYBRID_LEXICAL_WEIGHT,
       },
-      ...lexical.status,
+      warnings,
     },
   };
 }
@@ -419,26 +389,21 @@ export async function listIndexedCodebases() {
       zoektIndexRoot: repository.zoektIndexRoot,
       coverage: manifest?.coverage,
       freshnessStrategy: manifest?.freshnessStrategy,
-      semanticIndex: manifest?.semanticIndex,
+      gitnexusIndex: manifest?.gitnexusIndex,
     };
   }));
 }
 
 export async function searchEngineHealth() {
   const config = getSearchEngineConfig();
-  const embedding = getEmbeddingRuntimeConfig();
-  const qdrant = new QdrantClient({ url: config.qdrantUrl });
+  const gitnexus = await gitNexusHealth();
   const ripgrepAvailable = await hasRipgrep();
-  const qdrantStatus = await checkQdrantConnection(qdrant);
   const repositories = await listIndexedRepositories(config);
 
   return {
     cwd: process.cwd(),
-    qdrantUrl: config.qdrantUrl,
-    qdrantCollection: config.qdrantCollection,
-    embedding,
-    qdrantReachable: qdrantStatus.ok,
-    qdrantMessage: qdrantStatus.message,
+    searchBackend: "gitnexus+lexical",
+    gitnexus,
     ripgrepAvailable,
     ripgrepMessage: ripgrepAvailable ? "ripgrep available" : "ripgrep is not installed",
     indexRoot: config.indexRoot,
@@ -456,7 +421,7 @@ export async function searchEngineHealth() {
         fileCount: repository.fileCount,
         coverage: manifest?.coverage,
         freshnessStrategy: manifest?.freshnessStrategy,
-        semanticIndex: manifest?.semanticIndex,
+        gitnexusIndex: manifest?.gitnexusIndex,
       };
     })),
     repoHint: path.resolve(process.env.REPO_ROOT || "."),

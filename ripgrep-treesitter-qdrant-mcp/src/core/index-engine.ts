@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { getSearchEngineConfig } from "./config.js";
 import {
   getRepoStoragePaths,
@@ -15,15 +14,7 @@ import {
   type RepoIndexManifest,
   type RepoIndexedFileRecord,
 } from "./repository-store.js";
-import {
-  checkQdrantConnection,
-  deletePoints,
-  deletePointsByFilter,
-  ensureCollection,
-  getQdrantUpsertBatchSize,
-  upsertChunks,
-  type PointPayload,
-} from "../lib/qdrant-utils.js";
+import { analyzeGitNexus, runGitNexus } from "../lib/gitnexus-utils.js";
 import {
   discoverSourceFiles,
   readText,
@@ -32,10 +23,7 @@ import {
   type ExcludedFileSample,
   type IndexCoverageOptions,
 } from "../lib/fs-utils.js";
-import { CODE_CHUNK_SCHEMA_VERSION, extractCodeChunks } from "../lib/tree-sitter-utils.js";
 import { buildLocalLexicalDocument, writeLocalLexicalIndex } from "../lib/local-lexical-utils.js";
-import { embedDocuments, getEmbeddingRuntimeConfig } from "../lib/embedding-utils.js";
-import { EmbeddingBatchQueue } from "../lib/embedding-batcher.js";
 import { hasRipgrep } from "../lib/ripgrep-utils.js";
 
 const execFileAsync = promisify(execFile);
@@ -67,27 +55,6 @@ type VerificationReport = {
   gitChangedExcludedFiles: Array<{ path: string; reason: string }>;
 };
 
-function buildPointId(
-  repoId: string,
-  relativePath: string,
-  chunk: { symbol: string; kind: string; startLine: number; endLine: number; text: string },
-): string {
-  const hex = hashText([
-    repoId,
-    relativePath,
-    chunk.symbol,
-    chunk.kind,
-    String(chunk.startLine),
-    String(chunk.endLine),
-    chunk.text,
-  ].join("\n")).slice(0, 32).split("");
-
-  hex[12] = "5";
-  hex[16] = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
-
-  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20, 32).join("")}`;
-}
-
 function createEmptyManifest(repoId: string, repoName: string, repoRoot: string): RepoIndexManifest {
   return {
     version: 1,
@@ -97,19 +64,6 @@ function createEmptyManifest(repoId: string, repoName: string, repoRoot: string)
     indexedAt: new Date(0).toISOString(),
     fileCount: 0,
     files: {},
-  };
-}
-
-function buildRepoFilter(repoId: string): Record<string, unknown> {
-  return {
-    must: [
-      {
-        key: "repoId",
-        match: {
-          value: repoId,
-        },
-      },
-    ],
   };
 }
 
@@ -326,11 +280,6 @@ type FileReindexPlan = {
   existing?: RepoIndexedFileRecord;
 };
 
-type PendingEmbeddingPoint = {
-  id: string;
-  payload: PointPayload;
-};
-
 export async function indexRepository(repoRootInput?: string, options: IndexRepositoryOptions = {}) {
   const config = getSearchEngineConfig();
   const repoRoot = path.resolve(repoRootInput || options.repoRoot || options.repo_root || process.env.REPO_ROOT || ".");
@@ -345,18 +294,6 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
   const coverageOptions = mergeCoverageOptions(repoConfig, options);
   const discovery = await discoverSourceFiles(repoRoot, coverageOptions);
   const previousManifest = await readRepoManifest(storage.manifestPath);
-  const embedding = getEmbeddingRuntimeConfig();
-  const semanticIndexCurrent = Boolean(
-    previousManifest?.semanticIndex
-    && previousManifest.semanticIndex.model === embedding.model
-    && previousManifest.semanticIndex.dimensions === embedding.dimensions
-    && previousManifest.semanticIndex.collection === config.qdrantCollection
-    && previousManifest.semanticIndex.queryPrefix === embedding.queryPrefix
-    && previousManifest.semanticIndex.pooling === embedding.pooling
-    && previousManifest.semanticIndex.normalized === embedding.normalized
-    && previousManifest.semanticIndex.chunkingVersion === CODE_CHUNK_SCHEMA_VERSION,
-  );
-  const semanticRebuildRequired = !semanticIndexCurrent;
   const manifest = previousManifest ?? createEmptyManifest(storage.repoId, storage.repoName, storage.repoRoot);
   const git = await getGitChangedFiles(repoRoot);
   const files = discovery.files;
@@ -406,18 +343,9 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     };
   }
 
-  const client = new QdrantClient({ url: config.qdrantUrl });
-  const qdrantStatus = await checkQdrantConnection(client);
-  if (!qdrantStatus.ok) {
-    throw new Error(`Qdrant is not reachable at ${config.qdrantUrl}. ${qdrantStatus.message}`);
-  }
-
-  await ensureCollection(client, config.qdrantCollection, embedding.dimensions);
-
   const seenPaths = new Set<string>();
   const nextFiles: Record<string, RepoIndexedFileRecord> = {};
   const filesToReindex: FileReindexPlan[] = [];
-  const pointIdsToDelete = new Set<string>();
 
   let changedFiles = 0;
   let unchangedFiles = 0;
@@ -436,7 +364,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
         }
       : undefined;
 
-    const forceRebuild = mode === "force" || semanticRebuildRequired;
+    const forceRebuild = mode === "force";
     const mustHash = forceRebuild || hashMode === "hash-all-candidates";
     const metadataMatches = existing && existing.size === stat.size && existing.mtimeMs === stat.mtimeMs && existingDocument;
 
@@ -472,57 +400,23 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
   }
 
   let deletedFiles = 0;
-  for (const [relativePath, record] of Object.entries(manifest.files)) {
+  for (const relativePath of Object.keys(manifest.files)) {
     if (seenPaths.has(relativePath)) {
       continue;
     }
     deletedFiles += 1;
-    for (const pointId of record.qdrantPointIds) {
-      pointIdsToDelete.add(pointId);
-    }
   }
-
-  const readyPoints: Array<{ id: string; vector: number[]; payload: PointPayload }> = [];
-  const qdrantUpsertBatchSize = getQdrantUpsertBatchSize();
-  let upsertedPoints = 0;
-
-  const flushReadyPoints = async () => {
-    if (readyPoints.length === 0) return;
-    const batch = readyPoints.splice(0, readyPoints.length);
-    await upsertChunks(client, config.qdrantCollection, batch);
-    upsertedPoints += batch.length;
-  };
-
-  const embeddingQueue = new EmbeddingBatchQueue<PendingEmbeddingPoint>(
-    embedding.batchSize,
-    embedDocuments,
-    async (point, vector) => {
-      readyPoints.push({ ...point, vector });
-      if (readyPoints.length >= qdrantUpsertBatchSize) {
-        await flushReadyPoints();
-      }
-    },
-  );
 
   for (const plan of filesToReindex) {
     const source = await readText(plan.file);
     const stat = await fs.stat(plan.file);
     const contentHash = hashText(source);
-    const chunks = extractCodeChunks(plan.file, source);
-    const qdrantPointIds = chunks.map((chunk) => buildPointId(storage.repoId, plan.relativePath, chunk));
-    const currentPointIds = new Set(qdrantPointIds);
-    for (const pointId of plan.existing?.qdrantPointIds || []) {
-      if (!currentPointIds.has(pointId)) {
-        pointIdsToDelete.add(pointId);
-      }
-    }
-
     nextFiles[plan.relativePath] = {
       path: plan.relativePath,
       hash: contentHash,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
-      qdrantPointIds,
+      qdrantPointIds: [], // Legacy manifest field; vector storage is no longer used.
       document: buildLocalLexicalDocument(repoRoot, plan.file, source, {
         repoId: storage.repoId,
         repoName: storage.repoName,
@@ -530,33 +424,11 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
       updatedAt: indexedAt,
     };
 
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunk = chunks[index];
-      await embeddingQueue.add(
-        `${plan.relativePath}\n${chunk.symbol}\n${chunk.text}`,
-        {
-          id: qdrantPointIds[index],
-          payload: {
-            repoId: storage.repoId,
-            repo: storage.repoName,
-            repoRoot,
-            path: plan.relativePath,
-            symbol: chunk.symbol,
-            kind: chunk.kind,
-            language: chunk.language,
-            startLine: chunk.startLine,
-            endLine: chunk.endLine,
-            content: chunk.text,
-          },
-        },
-      );
-    }
   }
 
-  await embeddingQueue.flush();
-  const deletedPointIds = Array.from(pointIdsToDelete);
-  await deletePoints(client, config.qdrantCollection, deletedPointIds);
-  await flushReadyPoints();
+  // Analyze before publishing the lexical manifest, so failures remain retryable.
+  // GitNexus tracks dirty files independently of the lexical coverage settings.
+  const gitnexusIndex = await analyzeGitNexus(repoRoot, storage.repoId, mode === "force", discovery.coverage.extraExcludeGlobs);
 
   const documents = Object.values(nextFiles)
     .sort((a, b) => a.path.localeCompare(b.path))
@@ -576,15 +448,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     fileCount: documents.length,
     coverage: discovery.coverage,
     freshnessStrategy: hashMode,
-    semanticIndex: {
-      model: embedding.model,
-      dimensions: embedding.dimensions,
-      collection: config.qdrantCollection,
-      queryPrefix: embedding.queryPrefix,
-      pooling: embedding.pooling,
-      normalized: embedding.normalized,
-      chunkingVersion: CODE_CHUNK_SCHEMA_VERSION,
-    },
+    gitnexusIndex,
     files: nextFiles,
   };
   await writeRepoManifest(storage.manifestPath, nextManifest);
@@ -609,14 +473,12 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     excludedFiles: discovery.excludedFiles,
     git,
   });
-  if (semanticRebuildRequired) {
-    warnings.push("Semantic index configuration or chunking schema changed; rebuilt all indexed candidate files.");
-  }
 
   return {
     repoId: storage.repoId,
     repoName: storage.repoName,
     repoRoot: storage.repoRoot,
+    indexedAt: gitnexusIndex.indexedAt,
     mode,
     status: "ok",
     manifestPath: storage.manifestPath,
@@ -638,11 +500,7 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
       changedFiles: git.files.length,
       error: git.error,
     },
-    qdrant: {
-      collection: config.qdrantCollection,
-      upsertedPoints,
-      deletedPoints: deletedPointIds.length,
-    },
+    gitnexus: gitnexusIndex,
     localLexicalIndex: {
       ok: true,
       path: storage.localLexicalIndexPath,
@@ -676,13 +534,12 @@ export async function removeIndexedRepositoryData(reference?: string) {
   const repoRoot = indexedRepository?.repoRoot || storage.repoRoot;
   const repoDir = indexedRepository?.manifestPath ? path.dirname(indexedRepository.manifestPath) : storage.repoDir;
 
-  const qdrant = new QdrantClient({ url: config.qdrantUrl });
-  const qdrantStatus = await checkQdrantConnection(qdrant);
-  if (!qdrantStatus.ok) {
-    throw new Error(`Qdrant is not reachable at ${config.qdrantUrl}. ${qdrantStatus.message}`);
+  // Refuse deletion outside the dedicated repository-artifact directory.
+  const relative = path.relative(path.resolve(config.repositoriesRoot), path.resolve(repoDir));
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Unsafe repository artifact path: ${repoDir}`);
   }
-
-  await deletePointsByFilter(qdrant, config.qdrantCollection, buildRepoFilter(repoId));
+  await runGitNexus(["remove", repoRoot, "--force"]);
   await fs.rm(repoDir, { recursive: true, force: true });
   await removeIndexedRepository(config, repoId);
 
@@ -692,8 +549,8 @@ export async function removeIndexedRepositoryData(reference?: string) {
     repoRoot,
     removedFromRegistry: true,
     removedArtifacts: true,
-    removedVectors: true,
+    removedGraph: true,
+    removedVectors: false, // Existing Qdrant data is retained; no Qdrant service is required.
     repoDir,
-    qdrantCollection: config.qdrantCollection,
   };
 }

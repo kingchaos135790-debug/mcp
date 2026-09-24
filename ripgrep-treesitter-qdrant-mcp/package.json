@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Code search and indexing engine over ripgrep + Tree-sitter + Qdrant",
+  "description": "Code search and indexing engine over GitNexus graph intelligence and ripgrep",
   "main": "dist/cli/run-core.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -16,6 +16,8 @@
     "@huggingface/transformers": "4.2.0",
     "@qdrant/js-client-rest": "1.17.0",
     "fast-glob": "3.3.3",
+    "gitnexus": "1.6.12",
+    "node": "24.21.0",
     "tree-sitter": "0.21.1",
     "tree-sitter-c": "0.21.4",
     "tree-sitter-c-sharp": "0.21.3",
@@ -37,7 +39,7 @@
   },
   "keywords": [
     "code-search",
-    "qdrant",
+    "gitnexus",
     "tree-sitter",
     "ripgrep"
   ]

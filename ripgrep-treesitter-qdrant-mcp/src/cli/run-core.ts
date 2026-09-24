@@ -1,14 +1,12 @@
-﻿import {
+import {
   hybridCodeSearch,
   lexicalCodeSearch,
   listIndexedCodebases,
   searchEngineHealth,
-  semanticCodeSearch,
 } from "../core/search-engine.js";
 import { indexRepository, removeIndexedRepositoryData } from "../core/index-engine.js";
 
 type CommandName =
-  | "semantic_code_search"
   | "lexical_code_search"
   | "hybrid_code_search"
   | "server_health"
@@ -30,9 +28,6 @@ async function main() {
   }
 
   switch (command) {
-    case "semantic_code_search":
-      process.stdout.write(JSON.stringify(await semanticCodeSearch(payload.query, payload.limit, payload.repo), null, 2));
-      return;
     case "lexical_code_search":
       process.stdout.write(JSON.stringify(await lexicalCodeSearch(payload.query, payload.limit, payload.repo, payload.case_mode), null, 2));
       return;
