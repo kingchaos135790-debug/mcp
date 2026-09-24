@@ -71,6 +71,7 @@ class RepositoryAutoIndexer:
         self._config_lock = asyncio.Lock()
         self._index_lock = asyncio.Lock()
         self._watch_task: asyncio.Task[None] | None = None
+        self._startup_index_task: asyncio.Task[None] | None = None
 
     async def ensure_config_file(self) -> None:
         async with self._config_lock:
@@ -209,8 +210,28 @@ class RepositoryAutoIndexer:
     async def start(self) -> None:
         await self.ensure_config_file()
         await self.sync_env_repositories()
-        await self.run_startup_indexing()
         await self.restart_watcher()
+        self._start_startup_indexing_task()
+
+    def _start_startup_indexing_task(self) -> None:
+        if self._startup_index_task is not None and not self._startup_index_task.done():
+            return
+        self._startup_index_task = asyncio.create_task(
+            self._run_startup_indexing_background(),
+            name="repository-startup-indexing",
+        )
+
+    async def _run_startup_indexing_background(self) -> None:
+        try:
+            await self.run_startup_indexing()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Startup auto-index task failed")
+        finally:
+            current = asyncio.current_task()
+            if self._startup_index_task is current:
+                self._startup_index_task = None
 
     async def stop(self) -> None:
         if self._watch_task is not None:
@@ -218,6 +239,11 @@ class RepositoryAutoIndexer:
             with suppress(asyncio.CancelledError):
                 await self._watch_task
             self._watch_task = None
+        if self._startup_index_task is not None:
+            self._startup_index_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._startup_index_task
+            self._startup_index_task = None
 
     async def restart_watcher(self) -> None:
         if self._watch_task is not None:

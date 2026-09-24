@@ -197,6 +197,60 @@ class RepositoryAutoIndexerTests(unittest.TestCase):
         )
         self.assertIsNone(self.indexer._watch_task)
 
+    def test_start_launches_startup_indexing_without_blocking_server_ready(self) -> None:
+        async def scenario() -> None:
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def noop() -> None:
+                return None
+
+            async def slow_startup_indexing() -> None:
+                started.set()
+                await release.wait()
+
+            self.indexer.ensure_config_file = noop
+            self.indexer.sync_env_repositories = noop
+            self.indexer.restart_watcher = noop
+            self.indexer.run_startup_indexing = slow_startup_indexing
+
+            await asyncio.wait_for(self.indexer.start(), timeout=0.1)
+            await asyncio.wait_for(started.wait(), timeout=0.1)
+
+            task = self.indexer._startup_index_task
+            self.assertIsNotNone(task)
+            assert task is not None
+            self.assertFalse(task.done())
+
+            release.set()
+            await asyncio.wait_for(task, timeout=0.1)
+            self.assertIsNone(self.indexer._startup_index_task)
+
+        asyncio.run(scenario())
+
+    def test_stop_cancels_background_startup_indexing(self) -> None:
+        async def scenario() -> None:
+            started = asyncio.Event()
+
+            async def noop() -> None:
+                return None
+
+            async def slow_startup_indexing() -> None:
+                started.set()
+                await asyncio.Event().wait()
+
+            self.indexer.ensure_config_file = noop
+            self.indexer.sync_env_repositories = noop
+            self.indexer.restart_watcher = noop
+            self.indexer.run_startup_indexing = slow_startup_indexing
+
+            await self.indexer.start()
+            await asyncio.wait_for(started.wait(), timeout=0.1)
+            await asyncio.wait_for(self.indexer.stop(), timeout=0.1)
+
+            self.assertIsNone(self.indexer._startup_index_task)
+
+        asyncio.run(scenario())
 
 if __name__ == "__main__":
     unittest.main()
