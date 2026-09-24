@@ -48,7 +48,7 @@ call :prune_logs "%MCP_LAUNCHER_NAME%-runtime-*.log"
 if "%FASTMCP_LOG_LEVEL%"=="" set "FASTMCP_LOG_LEVEL=DEBUG"
 if "%FASTMCP_ENABLE_RICH_LOGGING%"=="" set "FASTMCP_ENABLE_RICH_LOGGING=false"
 if "%FASTMCP_ENABLE_RICH_TRACEBACKS%"=="" set "FASTMCP_ENABLE_RICH_TRACEBACKS=false"
-if "%FASTMCP_STATELESS_HTTP%"=="" set "FASTMCP_STATELESS_HTTP=false"
+if "%FASTMCP_STATELESS_HTTP%"=="" set "FASTMCP_STATELESS_HTTP=true"
 if "%WINDOWS_MCP_WATCHDOG_ENABLED%"=="" set "WINDOWS_MCP_WATCHDOG_ENABLED=false"
 set "PYTHONUNBUFFERED=1"
 set "PYTHONFAULTHANDLER=1"
@@ -71,25 +71,21 @@ call :log "Python process output will be mirrored to the console and %MCP_STDIO_
 
 if not exist "%MCP_DIR%" (
   call :log "ERROR: Integrated MCP folder not found: %MCP_DIR%"
-  pause
   exit /b 1
 )
 
 if not exist "%WINDOWS_MCP_DIR%" (
   call :log "ERROR: Windows-MCP folder not found: %WINDOWS_MCP_DIR%"
-  pause
   exit /b 1
 )
 
 if not exist "%SEARCH_ENGINE_DIR%\package.json" (
   call :log "ERROR: search engine package.json not found: %SEARCH_ENGINE_DIR%\package.json"
-  pause
   exit /b 1
 )
 
 if not exist "%PYTHON_EXE%" (
   call :log "ERROR: python.exe not found in Windows-MCP venv: %PYTHON_EXE%"
-  pause
   exit /b 1
 )
 
@@ -124,19 +120,16 @@ call :log "Checking for an existing MCP launcher on TCP port %MCP_PORT%"
 call :release_mcp_port
 if errorlevel 1 (
   call :log "ERROR: TCP port %MCP_PORT% is occupied by a process that this launcher cannot safely replace"
-  pause
   exit /b 1
 )
 call :log "TCP port %MCP_PORT% is available"
 
 if not exist "%SEARCH_ENGINE_DIR%\node_modules\gitnexus\dist\cli\index.js" (
   call :log "ERROR: GitNexus is missing. Run npm install in the search engine directory."
-  pause
   exit /b 1
 )
 if not exist "%SEARCH_ENGINE_DIR%\node_modules\node\bin\node.exe" (
   call :log "ERROR: GitNexus Node runtime is missing. Run npm install in the search engine directory."
-  pause
   exit /b 1
 )
 call :log "Search backend: GitNexus graph plus lexical search"
@@ -152,14 +145,12 @@ if "%BUILD_EXIT_CODE%"=="10" (
   if errorlevel 1 (
     call :log "ERROR: failed to build the search engine"
     popd
-    pause
     exit /b 1
   )
   call :log "Search engine core build completed"
 ) else if not "%BUILD_EXIT_CODE%"=="0" (
   call :log "ERROR: failed while checking whether the search engine core needs a rebuild"
   popd
-  pause
   exit /b 1
 )
 if "%BUILD_EXIT_CODE%"=="0" call :log "Search engine core is up to date"
@@ -185,7 +176,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 set "SERVER_EXIT_CODE=%ERRORLEVEL%"
 if "%SERVER_EXIT_CODE%"=="0" (
   call :log "Windows code search MCP stopped cleanly"
-  pause
   exit /b 0
 )
 call :log "Windows code search MCP exited unexpectedly with code %SERVER_EXIT_CODE%"
@@ -198,7 +188,6 @@ call :log "Restarting Python MCP server in %RESTART_DELAY_SECONDS% seconds to pr
 timeout /t %RESTART_DELAY_SECONDS% >nul
 if not exist "%PYTHON_EXE%" (
   call :log "ERROR: python.exe disappeared before restart: %PYTHON_EXE%"
-  pause
   exit /b %SERVER_EXIT_CODE%
 )
 goto server_loop

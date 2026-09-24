@@ -171,7 +171,7 @@ def configure_http_runtime(transport: str, host: str, port: int) -> None:
     fastmcp.settings.set_setting("host", host)
     fastmcp.settings.set_setting("port", port)
     fastmcp.settings.set_setting("streamable_http_path", "/mcp")
-    fastmcp.settings.set_setting("stateless_http", parse_bool(os.getenv("FASTMCP_STATELESS_HTTP"), False))
+    fastmcp.settings.set_setting("stateless_http", parse_bool(os.getenv("FASTMCP_STATELESS_HTTP"), True))
 
 
 def configure_process_diagnostics() -> tuple[str, str | None]:

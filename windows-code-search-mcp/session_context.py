@@ -11,11 +11,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 LOGGER = logging.getLogger(__name__)
 
 _CURRENT_CHAT_SESSION_ID: ContextVar[str] = ContextVar("current_chat_session_id", default="")
+_CURRENT_REQUEST_SESSION_ID: ContextVar[str] = ContextVar("current_request_session_id", default="")
 _CURRENT_ACCESS_TOKEN: ContextVar[str] = ContextVar("current_access_token", default="")
 _CURRENT_BOOT_ID: ContextVar[str] = ContextVar("current_boot_id", default="")
 _SESSION_ID_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _TOKEN_SESSION_BINDER: Callable[[str, str], None] | None = None
 _MCP_SESSION_HEADER = b"mcp-session-id"
+_CONNECTOR_SESSION_HEADER = b"x-openai-session"
 
 
 def normalize_chat_session_id(value: str | None) -> str:
@@ -52,6 +54,14 @@ def get_current_chat_session_id() -> str:
     return normalize_chat_session_id(_CURRENT_CHAT_SESSION_ID.get())
 
 
+def set_current_request_session_id(session_id: str | None) -> None:
+    _CURRENT_REQUEST_SESSION_ID.set(normalize_chat_session_id(session_id))
+
+
+def get_current_request_session_id() -> str:
+    return normalize_chat_session_id(_CURRENT_REQUEST_SESSION_ID.get())
+
+
 def register_token_session_binder(callback: Callable[[str, str], None] | None) -> None:
     global _TOKEN_SESSION_BINDER
     _TOKEN_SESSION_BINDER = callback
@@ -86,7 +96,7 @@ def _message_header(message: Message, name: bytes) -> str:
 
 
 class McpSessionContextMiddleware:
-    """Bind each HTTP request to its MCP transport session without sharing ContextVars across chats."""
+    """Bind each HTTP request to a stable connector or MCP transport session."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -97,16 +107,21 @@ class McpSessionContextMiddleware:
             return
 
         previous_session_id = get_current_chat_session_id()
+        previous_request_session_id = get_current_request_session_id()
         previous_access_token = get_current_access_token()
-        request_session_id = normalize_chat_session_id(_scope_header(scope, _MCP_SESSION_HEADER))
+        connector_session_id = normalize_chat_session_id(_scope_header(scope, _CONNECTOR_SESSION_HEADER))
+        transport_session_id = normalize_chat_session_id(_scope_header(scope, _MCP_SESSION_HEADER))
+        request_session_id = connector_session_id or transport_session_id
         response_session_id = ""
         response_status = 0
 
-        # ContextVars are task-local, but clear both values explicitly so a reused task cannot
-        # inherit authentication/session identity from an earlier request.
+        # ContextVars are task-local, but clear all request identity explicitly so a reused task
+        # cannot inherit authentication/session identity from an earlier request.
         set_current_access_token("")
         set_current_chat_session_id("")
+        set_current_request_session_id("")
         if request_session_id:
+            set_current_request_session_id(request_session_id)
             bind_current_request_session(request_session_id)
 
         async def send_with_session_context(message: Message) -> None:
@@ -114,9 +129,11 @@ class McpSessionContextMiddleware:
             if message.get("type") == "http.response.start":
                 response_status = int(message.get("status", 0) or 0)
                 response_session_id = normalize_chat_session_id(_message_header(message, _MCP_SESSION_HEADER))
-                # The first initialize request has no Mcp-Session-Id header. FastMCP returns the
-                # newly allocated session in the response, so capture it before the request exits.
+                # The first initialize request may have no Mcp-Session-Id header. FastMCP returns
+                # one in stateful mode; use it only when no stable connector/request identity was
+                # supplied with the request.
                 if response_session_id and not request_session_id:
+                    set_current_request_session_id(response_session_id)
                     bind_current_request_session(response_session_id)
                     LOGGER.info("MCP transport session established: session=%s", response_session_id)
             await send(message)
@@ -140,6 +157,7 @@ class McpSessionContextMiddleware:
             )
             set_current_access_token(previous_access_token)
             set_current_chat_session_id(previous_session_id)
+            set_current_request_session_id(previous_request_session_id)
 
 
 @contextmanager

@@ -56,7 +56,6 @@ if not exist "%CLOUDFLARE_EXE%" (
 
   call :log "ERROR: Cloudflare executable not found: %CLOUDFLARE_EXE%"
 
-  pause
 
   exit /b 1
 
@@ -70,12 +69,12 @@ if not exist "%CLOUDFLARE_EXE%" (
 
 :loop
 
-call :log "Starting Cloudflare Tunnel with HTTP/2 and debug logging"
+call :log "Starting Cloudflare Tunnel with automatic transport negotiation and debug logging"
 
->>"%CLOUDFLARE_LOG%" echo [%DATE% %TIME%] Command: "%CLOUDFLARE_EXE%" tunnel --protocol http2 --loglevel %CLOUDFLARE_LOG_LEVEL% --transport-loglevel %CLOUDFLARE_TRANSPORT_LOG_LEVEL% run %TUNNEL_NAME%
+>>"%CLOUDFLARE_LOG%" echo [%DATE% %TIME%] Command: "%CLOUDFLARE_EXE%" tunnel --loglevel %CLOUDFLARE_LOG_LEVEL% --transport-loglevel %CLOUDFLARE_TRANSPORT_LOG_LEVEL% run %TUNNEL_NAME%
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
-  "$ErrorActionPreference='Continue'; & '%CLOUDFLARE_EXE%' tunnel --protocol http2 --loglevel '%CLOUDFLARE_LOG_LEVEL%' --transport-loglevel '%CLOUDFLARE_TRANSPORT_LOG_LEVEL%' run '%TUNNEL_NAME%' 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } } | Tee-Object -FilePath '%CLOUDFLARE_LOG%' -Append; $exitCode=$LASTEXITCODE; exit $exitCode"
+  "$ErrorActionPreference='Continue'; & '%CLOUDFLARE_EXE%' tunnel --loglevel '%CLOUDFLARE_LOG_LEVEL%' --transport-loglevel '%CLOUDFLARE_TRANSPORT_LOG_LEVEL%' run '%TUNNEL_NAME%' 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } } | Tee-Object -FilePath '%CLOUDFLARE_LOG%' -Append; $exitCode=$LASTEXITCODE; exit $exitCode"
 set "CF_EXIT_CODE=%ERRORLEVEL%"
 
 call :log "Tunnel stopped with exit code %CF_EXIT_CODE%"

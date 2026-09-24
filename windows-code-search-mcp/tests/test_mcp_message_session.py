@@ -9,10 +9,12 @@ from mcp_message_session import McpMessageSessionMiddleware
 class McpMessageSessionMiddlewareTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         session_context.set_current_chat_session_id("")
+        session_context.set_current_request_session_id("")
         session_context.set_current_access_token("")
 
     async def asyncTearDown(self) -> None:
         session_context.set_current_chat_session_id("")
+        session_context.set_current_request_session_id("")
         session_context.set_current_access_token("")
 
     async def test_non_initialize_message_binds_fastmcp_session_and_restores_context(self) -> None:
@@ -38,6 +40,32 @@ class McpMessageSessionMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed["token"], "")
         self.assertEqual(session_context.get_current_chat_session_id(), "inherited-session")
         self.assertEqual(session_context.get_current_access_token(), "inherited-token")
+
+    async def test_request_bound_session_survives_transport_reconnect(self) -> None:
+        observed = {}
+        middleware = McpMessageSessionMiddleware()
+        context = SimpleNamespace(
+            method="tools/call",
+            fastmcp_context=SimpleNamespace(session_id="replacement-transport-session"),
+        )
+
+        session_context.set_current_chat_session_id("connector-session")
+        session_context.set_current_request_session_id("connector-session")
+        session_context.set_current_access_token("request-token")
+
+        async def call_next(_context):
+            observed["session"] = session_context.get_current_chat_session_id()
+            observed["token"] = session_context.get_current_access_token()
+            return "ok"
+
+        result = await middleware.on_message(context, call_next)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(observed["session"], "connector-session")
+        self.assertEqual(observed["token"], "")
+        self.assertEqual(session_context.get_current_chat_session_id(), "connector-session")
+        self.assertEqual(session_context.get_current_request_session_id(), "connector-session")
+        self.assertEqual(session_context.get_current_access_token(), "request-token")
 
     async def test_initialize_does_not_force_session_id_before_transport_assigns_one(self) -> None:
         observed = {}

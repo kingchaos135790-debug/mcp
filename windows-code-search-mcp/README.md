@@ -219,20 +219,23 @@ Tunnel and origin notes:
 - prefer a tunnel origin of `127.0.0.1:18000`, not `localhost:18000`
 - this avoids IPv6 `::1` resolution mismatches where the tunnel reaches `localhost` over IPv6 but the MCP server is only listening on `127.0.0.1`
 - if Cloudflare logs show connection failures to `dial tcp [::1]:18000`, treat that as an origin-binding problem, not a tool-handler failure
+- let `cloudflared` negotiate its tunnel transport by default instead of forcing `--protocol http2`; use an explicit protocol only when diagnosing a transport-specific problem
 
 ### Concurrent access today
 
-The launcher now defaults to stateful streamable HTTP and leaves true stateless mode opt-in:
+The launcher now defaults to true stateless Streamable HTTP:
 
-- `FASTMCP_STATELESS_HTTP=false`
+- `FASTMCP_STATELESS_HTTP=true`
 
-Stateful requests are now bound to the MCP transport's `Mcp-Session-Id` in request-local `ContextVar` state. The transport session is authoritative for the active request; OAuth token-to-session mappings are only a fallback because one ChatGPT OAuth credential may be reused by several MCP sessions.
+This avoids making connector reliability depend on one long-lived HTTP/SSE transport session when `/mcp` is reached through a reverse proxy or tunnel. Each request gets a fresh FastMCP transport, while logical chat identity is kept separately.
+
+When ChatGPT supplies `X-OpenAI-Session`, that stable connector session is the request-local identity and survives a regenerated `Mcp-Session-Id` after reconnects. If the connector header is absent, `Mcp-Session-Id` remains the fallback. OAuth token-to-session mappings are fallback-only because one ChatGPT OAuth credential may be reused by several logical sessions.
 
 OAuth state mutations and persistence are serialized. The launcher also defaults `OAUTH_STATE_MAX_TOKENS=0`; if a positive soft cap is configured, valid credentials are retained. Expired access-token records remain persisted while their linked refresh token is valid so restart-time refresh and MCP resource propagation continue to work; pairs without a live refresh token are removed. A new chat must not revoke another live connector merely because its token lacks a custom chat-session binding.
 
-If you explicitly want true stateless request handling again, set:
+If a deployment specifically requires stateful Streamable HTTP, set:
 
-- `FASTMCP_STATELESS_HTTP=true`
+- `FASTMCP_STATELESS_HTTP=false`
 
 However, the interactive server runtime is still shared process-wide.
 
@@ -279,11 +282,11 @@ Practical rules for multi-chat editing today:
 - do not assume window focus, clipboard state, or desktop automation are isolated just because VS Code session context is separated
 
 ### Per-chat isolation guidance
-For stateful Streamable HTTP, use `Mcp-Session-Id` as the request-local isolation key whenever it is present. The initialization response establishes the new transport session, and subsequent requests restore that session before authentication and tool execution.
+Use the most stable authenticated request identity available. For ChatGPT connector traffic, prefer `X-OpenAI-Session`; it identifies the logical connector session even if FastMCP or the tunnel creates a new transport session after a reconnect. When that header is absent, use `Mcp-Session-Id` as the request-local fallback.
 
-Do not use a bearer token as a one-to-one chat identity. ChatGPT can reuse one OAuth credential across several MCP transport sessions, so the persisted token-to-session association is deliberately fallback-only and is never allowed to overwrite the current transport session.
+Do not use a bearer token as a one-to-one chat identity. ChatGPT can reuse one OAuth credential across several logical or transport sessions, so the persisted token-to-session association is deliberately fallback-only and is never allowed to overwrite an explicit connector/request session.
 
-If a future connector or transport does not provide `Mcp-Session-Id`, derive a stable fallback identity from an authenticated subject, token claims, an explicit connector session header, or a signed session token.
+For other connectors, derive a stable fallback identity from an authenticated subject, token claims, an explicit connector session header, or a signed session token.
 
 This protects connector/auth state across concurrent chats. It does not make Windows desktop, clipboard, shell/process state, or other machine-global interactive resources independent per chat; those still require a per-session runtime if stronger isolation is needed.
 

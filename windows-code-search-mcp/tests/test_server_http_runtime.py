@@ -76,19 +76,19 @@ class ConfigureHttpRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         fastmcp.settings.calls.clear()
 
-    def test_streamable_http_defaults_to_stateful_mode(self) -> None:
+    def test_streamable_http_defaults_to_stateless_mode(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("FASTMCP_STATELESS_HTTP", None)
 
             configure_http_runtime("streamable-http", "127.0.0.1", 8000)
 
-        self.assertIn(("stateless_http", False), fastmcp.settings.calls)
+        self.assertIn(("stateless_http", True), fastmcp.settings.calls)
 
-    def test_streamable_http_respects_stateless_override(self) -> None:
-        with patch.dict(os.environ, {"FASTMCP_STATELESS_HTTP": "true"}, clear=False):
+    def test_streamable_http_respects_stateful_override(self) -> None:
+        with patch.dict(os.environ, {"FASTMCP_STATELESS_HTTP": "false"}, clear=False):
             configure_http_runtime("streamable-http", "127.0.0.1", 8000)
 
-        self.assertIn(("stateless_http", True), fastmcp.settings.calls)
+        self.assertIn(("stateless_http", False), fastmcp.settings.calls)
 
     def test_non_http_transport_skips_runtime_configuration(self) -> None:
         configure_http_runtime("stdio", "127.0.0.1", 8000)

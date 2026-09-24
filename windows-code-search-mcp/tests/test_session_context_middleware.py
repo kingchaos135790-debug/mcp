@@ -5,10 +5,12 @@ import session_context
 from session_context import McpSessionContextMiddleware
 
 
-def make_scope(session_id: str = "") -> dict:
+def make_scope(session_id: str = "", connector_session_id: str = "") -> dict:
     headers = []
     if session_id:
         headers.append((b"mcp-session-id", session_id.encode("ascii")))
+    if connector_session_id:
+        headers.append((b"x-openai-session", connector_session_id.encode("ascii")))
     return {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -38,11 +40,13 @@ def make_send(messages: list[dict]):
 class McpSessionContextMiddlewareTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         session_context.set_current_chat_session_id("")
+        session_context.set_current_request_session_id("")
         session_context.set_current_access_token("")
         session_context.register_token_session_binder(None)
 
     async def asyncTearDown(self) -> None:
         session_context.set_current_chat_session_id("")
+        session_context.set_current_request_session_id("")
         session_context.set_current_access_token("")
         session_context.register_token_session_binder(None)
 
@@ -51,11 +55,13 @@ class McpSessionContextMiddlewareTests(unittest.IsolatedAsyncioTestCase):
 
         async def app(scope, receive, send):
             observed["session"] = session_context.get_current_chat_session_id()
+            observed["request_session"] = session_context.get_current_request_session_id()
             observed["token"] = session_context.get_current_access_token()
             await send({"type": "http.response.start", "status": 200, "headers": []})
             await send({"type": "http.response.body", "body": b""})
 
         session_context.set_current_chat_session_id("outer-session")
+        session_context.set_current_request_session_id("outer-request")
         session_context.set_current_access_token("outer-token")
         middleware = McpSessionContextMiddleware(app)
         messages = []
@@ -63,9 +69,31 @@ class McpSessionContextMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         await middleware(make_scope("session-a"), empty_receive, make_send(messages))
 
         self.assertEqual(observed["session"], "session-a")
+        self.assertEqual(observed["request_session"], "session-a")
         self.assertEqual(observed["token"], "")
         self.assertEqual(session_context.get_current_chat_session_id(), "outer-session")
+        self.assertEqual(session_context.get_current_request_session_id(), "outer-request")
         self.assertEqual(session_context.get_current_access_token(), "outer-token")
+
+    async def test_connector_session_takes_precedence_over_transport_session(self) -> None:
+        observed = {}
+
+        async def app(scope, receive, send):
+            observed["session"] = session_context.get_current_chat_session_id()
+            observed["request_session"] = session_context.get_current_request_session_id()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        middleware = McpSessionContextMiddleware(app)
+        messages = []
+        await middleware(
+            make_scope("transport-session", "connector-session"),
+            empty_receive,
+            make_send(messages),
+        )
+
+        self.assertEqual(observed["session"], "connector-session")
+        self.assertEqual(observed["request_session"], "connector-session")
 
     async def test_initialize_response_session_overrides_oauth_fallback_and_binds_token(self) -> None:
         bindings = []
@@ -73,8 +101,6 @@ class McpSessionContextMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         session_context.register_token_session_binder(lambda token, session_id: bindings.append((token, session_id)))
 
         async def app(scope, receive, send):
-            # Simulate authentication recovering an older token-level fallback before
-            # FastMCP allocates the new transport session for this initialize request.
             session_context.set_current_access_token("shared-token")
             session_context.set_current_chat_session_id("old-fallback")
             await send(
@@ -85,6 +111,7 @@ class McpSessionContextMiddlewareTests(unittest.IsolatedAsyncioTestCase):
                 }
             )
             observed_after_response["session"] = session_context.get_current_chat_session_id()
+            observed_after_response["request_session"] = session_context.get_current_request_session_id()
             await send({"type": "http.response.body", "body": b""})
 
         middleware = McpSessionContextMiddleware(app)
@@ -92,7 +119,34 @@ class McpSessionContextMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         await middleware(make_scope(), empty_receive, make_send(messages))
 
         self.assertEqual(observed_after_response["session"], "new-transport-session")
+        self.assertEqual(observed_after_response["request_session"], "new-transport-session")
         self.assertIn(("shared-token", "new-transport-session"), bindings)
+
+    async def test_initialize_response_does_not_replace_connector_session(self) -> None:
+        observed_after_response = {}
+
+        async def app(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-transport-session")],
+                }
+            )
+            observed_after_response["session"] = session_context.get_current_chat_session_id()
+            observed_after_response["request_session"] = session_context.get_current_request_session_id()
+            await send({"type": "http.response.body", "body": b""})
+
+        middleware = McpSessionContextMiddleware(app)
+        messages = []
+        await middleware(
+            make_scope(connector_session_id="connector-session"),
+            empty_receive,
+            make_send(messages),
+        )
+
+        self.assertEqual(observed_after_response["session"], "connector-session")
+        self.assertEqual(observed_after_response["request_session"], "connector-session")
 
     async def test_concurrent_requests_keep_transport_sessions_task_local(self) -> None:
         observed = []
