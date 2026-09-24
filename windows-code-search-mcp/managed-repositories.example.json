@@ -5,7 +5,7 @@
       "repo_root": "C:\\path\\to\\your\\project",
       "watch": true,
       "auto_index_on_start": true,
-      "include_docs": true,
+      "include_docs": false,
       "include_generated": false,
       "extra_extensions": [],
       "extra_include_globs": [],

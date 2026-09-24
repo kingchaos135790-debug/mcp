@@ -56,7 +56,6 @@ _is_generated_path = search_module._is_generated_path
 _identifier_candidates = search_module._identifier_candidates
 _rerank_fused_hits = search_module._rerank_fused_hits
 _extract_exact_matches = search_module._extract_exact_matches
-_clarify_generated_path_warnings = search_module._clarify_generated_path_warnings
 _compact_hybrid_search_result = search_module._compact_hybrid_search_result
 _compact_server_health = search_module._compact_server_health
 
@@ -371,19 +370,6 @@ class SearchRerankTests(unittest.TestCase):
         self.assertEqual(exact[0]["filePath"], "extensions/search.py")
         self.assertEqual(exact[0]["matchKind"], "exact_lexical")
         self.assertEqual(exact[0]["resultSource"], "live_lexical")
-
-    def test_generated_path_warning_explains_gitnexus_vs_live_lexical_coverage(self) -> None:
-        payload = {
-            "status": {
-                "warnings": [
-                    "Query appears to target generated or build output, but generated/build paths are excluded from indexed coverage for one or more selected repositories."
-                ]
-            }
-        }
-
-        _clarify_generated_path_warnings(payload)
-
-        self.assertIn("live lexical ripgrep", payload["status"]["warnings"][1])
 
     def test_exact_identifier_queries_drop_config_and_refactor_residue_when_definition_exists(self) -> None:
         fused = [

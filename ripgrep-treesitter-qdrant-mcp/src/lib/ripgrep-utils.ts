@@ -1,6 +1,7 @@
 ﻿import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { ALWAYS_IGNORED_GLOBS, DEFAULT_IGNORED_GLOBS, DEFAULT_INDEXED_EXTENSIONS } from "./fs-utils.js";
 import { getWindowsReservedDeviceExcludeGlobs } from "./windows-path-utils.js";
 
 const execFileAsync = promisify(execFile);
@@ -24,6 +25,13 @@ type RipgrepJsonEvent = {
 };
 
 export type RipgrepCaseMode = "smart" | "ignore" | "sensitive";
+
+export type RipgrepSearchCoverage = {
+  indexedExtensions?: string[];
+  ignoredGlobs?: string[];
+  extraIncludeGlobs?: string[];
+  maxFileBytes?: number;
+};
 
 function getRipgrepCaseArgs(caseMode: RipgrepCaseMode): string[] {
   switch (caseMode) {
@@ -70,6 +78,35 @@ function parseRipgrepJson(stdout: string, metadata: { repoId?: string; repoName?
   return matches;
 }
 
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+export function buildRipgrepCoverageArgs(coverage: RipgrepSearchCoverage = {}): string[] {
+  const indexedExtensions = coverage.indexedExtensions ?? DEFAULT_INDEXED_EXTENSIONS;
+  const includeGlobs = unique([
+    ...indexedExtensions.map((extension) => {
+      const normalized = String(extension || "").trim().toLowerCase();
+      if (!normalized) return "";
+      return `**/*${normalized.startsWith(".") ? normalized : `.${normalized}`}`;
+    }),
+    ...(coverage.extraIncludeGlobs || []),
+  ]);
+  const ignoredGlobs = coverage.ignoredGlobs === undefined
+    ? DEFAULT_IGNORED_GLOBS
+    : unique([...ALWAYS_IGNORED_GLOBS, ...coverage.ignoredGlobs]);
+
+  const args = [
+    ...includeGlobs.flatMap((glob) => ["--glob", glob]),
+    ...ignoredGlobs.flatMap((glob) => ["--glob", `!${glob.replace(/^!/, "")}`]),
+  ];
+
+  if (Number.isFinite(coverage.maxFileBytes) && Number(coverage.maxFileBytes) > 0) {
+    args.push("--max-filesize", String(Math.floor(Number(coverage.maxFileBytes))));
+  }
+  return args;
+}
+
 export async function hasRipgrep(): Promise<boolean> {
   try {
     await execFileAsync("rg", ["--version"]);
@@ -85,6 +122,7 @@ export async function queryRipgrep(
   limit: number,
   metadata: { repoId?: string; repoName?: string } = {},
   caseMode: RipgrepCaseMode = "smart",
+  coverage: RipgrepSearchCoverage = {},
 ): Promise<RipgrepMatch[]> {
   const reservedDeviceExcludeGlobs = getWindowsReservedDeviceExcludeGlobs();
   const args = [
@@ -96,6 +134,7 @@ export async function queryRipgrep(
     "--hidden",
     "--glob",
     "!.git",
+    ...buildRipgrepCoverageArgs(coverage),
     ...reservedDeviceExcludeGlobs.flatMap((glob) => ["--glob", glob]),
     "--max-count",
     String(Math.max(1, limit)),

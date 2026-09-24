@@ -196,10 +196,11 @@ async function resolveLexicalSearch(query, limit, repo, caseMode = "smart") {
         try {
             const hits = [];
             for (const targetRepository of targetRepositories) {
+                const manifest = await readRepoManifest(targetRepository.manifestPath);
                 const repoHits = await queryRipgrep(targetRepository.repoRoot, query, limit, {
                     repoId: targetRepository.repoId,
                     repoName: targetRepository.repoName,
-                }, caseMode);
+                }, caseMode, manifest?.coverage);
                 hits.push(...repoHits);
                 if (hits.length >= limit) {
                     break;

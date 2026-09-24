@@ -308,24 +308,6 @@ def _annotate_result_sources(items: object, source: str) -> None:
             item.setdefault("resultSource", source)
 
 
-def _clarify_generated_path_warnings(result: dict[str, object]) -> None:
-    status = result.get("status")
-    if not isinstance(status, dict):
-        return
-    warnings = status.get("warnings")
-    if not isinstance(warnings, list):
-        return
-    clarified: list[object] = []
-    for warning in warnings:
-        text = str(warning)
-        clarified.append(warning)
-        if "generated or build output" in text and "lexical ripgrep" not in text.lower():
-            clarified.append(
-                "GitNexus index coverage may exclude generated/build paths, but live lexical ripgrep results can still include generated files present on disk; check each hit's resultSource."
-            )
-    status["warnings"] = clarified
-
-
 def _rerank_fused_hits(query: str, fused: list[object], lexical: list[object] | None, limit: int) -> list[object]:
     lexical_paths: set[str] = set()
     lexical_basenames: set[str] = set()
@@ -485,7 +467,6 @@ class SearchExtension:
                 _annotate_result_sources(lexical_hits, "live_lexical")
                 result["lexical"] = lexical_hits
                 result["exact_matches"] = _extract_exact_matches(query, lexical_hits, limit)
-                _clarify_generated_path_warnings(result)
                 if isinstance(fused, list) and fused:
                     result["fused"] = _rerank_fused_hits(query, fused, lexical_hits, limit)
                     _annotate_result_sources(result["fused"], "hybrid_fused")

@@ -28,7 +28,7 @@ export const DEFAULT_DOC_EXTENSIONS = [".md", ".mdx", ".rst", ".adoc", ".txt"];
 
 const DEFAULT_MAX_SOURCE_FILE_BYTES = Number.parseInt(process.env.MAX_SOURCE_FILE_BYTES || "1048576", 10);
 
-const ALWAYS_IGNORED_GLOBS = [
+export const ALWAYS_IGNORED_GLOBS = [
   "**/node_modules/**",
   "**/.git/**",
   "**/.gitnexus/**",
@@ -37,6 +37,14 @@ const ALWAYS_IGNORED_GLOBS = [
   "**/third_party/**",
   "**/third-party/**",
   "**/*.min.js",
+  "**/*.bak",
+  "**/*.bak-*",
+  "**/*.backup",
+  "**/*.old",
+  "**/*.tmp",
+  "**/*.orig",
+  "**/*.rej",
+  "**/*.invalid-*",
 ];
 
 const GENERATED_IGNORED_GLOBS = [
