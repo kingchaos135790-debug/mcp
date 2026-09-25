@@ -32,9 +32,7 @@ set "CLOUDFLARE_LOG=%MCP_LOG_DIR%\%MCP_LAUNCHER_NAME%-%LOG_RUN_STAMP%.log"
 type nul >> "%CLOUDFLARE_LOG%"
 
 call :prune_logs "%MCP_LAUNCHER_NAME%-*.log"
-set "CLOUDFLARE_LOG_LEVEL=debug"
-
-set "CLOUDFLARE_TRANSPORT_LOG_LEVEL=debug"
+set "CLOUDFLARE_LOG_LEVEL=info"
 
 
 
@@ -47,8 +45,6 @@ call :log "Tunnel output will be mirrored to the console and %CLOUDFLARE_LOG%"
 
 call :log "Cloudflare log retention count: %MCP_LOG_KEEP_COUNT%"
 call :log "Cloudflare log level: %CLOUDFLARE_LOG_LEVEL%"
-
-call :log "Cloudflare transport log level: %CLOUDFLARE_TRANSPORT_LOG_LEVEL%"
 
 call :log "Cloudflare executable: %CLOUDFLARE_EXE%"
 
@@ -69,12 +65,12 @@ if not exist "%CLOUDFLARE_EXE%" (
 
 :loop
 
-call :log "Starting Cloudflare Tunnel with automatic transport negotiation and debug logging"
+call :log "Starting Cloudflare Tunnel with HTTP/2 and info logging"
 
->>"%CLOUDFLARE_LOG%" echo [%DATE% %TIME%] Command: "%CLOUDFLARE_EXE%" tunnel --loglevel %CLOUDFLARE_LOG_LEVEL% --transport-loglevel %CLOUDFLARE_TRANSPORT_LOG_LEVEL% run %TUNNEL_NAME%
+>>"%CLOUDFLARE_LOG%" echo [%DATE% %TIME%] Command: "%CLOUDFLARE_EXE%" tunnel --protocol http2 --loglevel %CLOUDFLARE_LOG_LEVEL% run %TUNNEL_NAME%
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
-  "$ErrorActionPreference='Continue'; & '%CLOUDFLARE_EXE%' tunnel --loglevel '%CLOUDFLARE_LOG_LEVEL%' --transport-loglevel '%CLOUDFLARE_TRANSPORT_LOG_LEVEL%' run '%TUNNEL_NAME%' 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } } | Tee-Object -FilePath '%CLOUDFLARE_LOG%' -Append; $exitCode=$LASTEXITCODE; exit $exitCode"
+  "$ErrorActionPreference='Continue'; & '%CLOUDFLARE_EXE%' tunnel --protocol http2 --loglevel '%CLOUDFLARE_LOG_LEVEL%' run '%TUNNEL_NAME%' 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } } | Tee-Object -FilePath '%CLOUDFLARE_LOG%' -Append; $exitCode=$LASTEXITCODE; exit $exitCode"
 set "CF_EXIT_CODE=%ERRORLEVEL%"
 
 call :log "Tunnel stopped with exit code %CF_EXIT_CODE%"

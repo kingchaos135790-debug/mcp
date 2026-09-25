@@ -219,7 +219,7 @@ Tunnel and origin notes:
 - prefer a tunnel origin of `127.0.0.1:18000`, not `localhost:18000`
 - this avoids IPv6 `::1` resolution mismatches where the tunnel reaches `localhost` over IPv6 but the MCP server is only listening on `127.0.0.1`
 - if Cloudflare logs show connection failures to `dial tcp [::1]:18000`, treat that as an origin-binding problem, not a tool-handler failure
-- let `cloudflared` negotiate its tunnel transport by default instead of forcing `--protocol http2`; use an explicit protocol only when diagnosing a transport-specific problem
+- force `cloudflared` to use `--protocol http2` for this connector deployment; automatic negotiation can select QUIC, and observed QUIC/IPv6 edge timeouts caused brief connector `UNAVAILABLE` failures even while the local MCP server stayed healthy
 
 ### Concurrent access today
 
