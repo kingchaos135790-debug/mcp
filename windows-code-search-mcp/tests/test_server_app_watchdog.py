@@ -135,6 +135,29 @@ sys.modules.pop("server_runtime", None)
 
 
 class ServerAppWatchdogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_partial_extension_start_is_cleaned_up(self) -> None:
+        extension = types.SimpleNamespace(start=AsyncMock(side_effect=RuntimeError("startup failed")), stop=AsyncMock())
+        app = ServerApp(Config(), [extension])
+        app._start_core_services = AsyncMock()
+        app._stop_core_services = AsyncMock()
+        with self.assertRaisesRegex(RuntimeError, "startup failed"):
+            async with app.lifespan(None):
+                pass
+        extension.stop.assert_awaited_once_with(app.context)
+        app._stop_core_services.assert_awaited_once()
+
+    async def test_cleanup_continues_after_extension_failure(self) -> None:
+        first = types.SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+        second = types.SimpleNamespace(start=AsyncMock(), stop=AsyncMock(side_effect=RuntimeError("stop failed")))
+        app = ServerApp(Config(), [first, second])
+        app._start_core_services = AsyncMock()
+        app._stop_core_services = AsyncMock()
+        with self.assertLogs("server_app", level="ERROR"):
+            async with app.lifespan(None):
+                pass
+        first.stop.assert_awaited_once()
+        app._stop_core_services.assert_awaited_once()
+
     async def test_start_core_services_skips_watchdog_by_default(self) -> None:
         app = ServerApp(Config(), [])
 

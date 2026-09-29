@@ -13,19 +13,12 @@ import fastmcp
 
 import bootstrap  # noqa: F401
 
-from server_app import ServerApp
 from server_config import FILE_EDIT_TOOL_NAMES, SEARCH_TOOL_NAMES, Transport, build_config, parse_bool
 
 try:
     from server_config import WORKSPACE_TOOL_NAMES
 except ImportError:  # Compatibility with tests that stub server_config.
     WORKSPACE_TOOL_NAMES: list[str] = []
-from server_extensions import FileEditExtension, SearchExtension, WindowsDesktopExtension
-
-try:
-    from server_extensions import WorkspaceSummaryExtension
-except ImportError:  # Compatibility with tests that stub server_extensions.
-    WorkspaceSummaryExtension = None  # type: ignore[assignment]
 from session_context import get_current_boot_id, get_current_chat_session_id, normalize_chat_session_id, set_current_boot_id
 
 LOGGER = logging.getLogger(__name__)
@@ -153,8 +146,21 @@ class SessionRoutingFileHandler(logging.Handler):
             super().close()
 
 
-def create_server_app(host: str, port: int) -> ServerApp:
+def create_server_app(host: str, port: int):
+    from distributed.roles import validate_role
+
     config = build_config(host, port)
+    config = validate_role(config, host)
+    if config.role == "gateway":
+        from distributed.gateway import GatewayApp
+        app = GatewayApp(config)
+        if any(d.local_forward_port == port for d in app.registry.enabled):
+            raise ValueError("Gateway port must differ from every local_forward_port")
+        return app
+
+    from server_app import ServerApp
+    from server_extensions import FileEditExtension, SearchExtension, WindowsDesktopExtension, WorkspaceSummaryExtension
+
     if config.mode not in {"", "local"}:
         raise ValueError("Only MODE=local is supported by windows-code-search-mcp")
     extensions = [SearchExtension(), FileEditExtension()]
@@ -257,6 +263,11 @@ def configure_process_diagnostics() -> tuple[str, str | None]:
     show_default=True,
 )
 def main(transport: str, host: str, port: int) -> None:
+    role = os.getenv("MCP_ROLE", "standalone").strip().lower()
+    if role in {"node", "gateway"}:
+        if transport == Transport.SSE.value:
+            raise click.UsageError("Node and gateway roles require Streamable HTTP")
+        transport = Transport.STREAMABLE_HTTP.value
     configure_http_runtime(transport, host, port)
     boot_id, runtime_log_path = configure_process_diagnostics()
     app = create_server_app(host, port)
@@ -269,16 +280,25 @@ def main(transport: str, host: str, port: int) -> None:
     if transport == Transport.STREAMABLE_HTTP.value:
         print(f"[INFO] Streamable HTTP path : {fastmcp.settings.streamable_http_path}")
         print(f"[INFO] Streamable HTTP stateless : {fastmcp.settings.stateless_http}")
-    print("[INFO] Search tools : " + ", ".join(SEARCH_TOOL_NAMES))
-    print("[INFO] File edit tools : " + ", ".join(FILE_EDIT_TOOL_NAMES))
-    print("[INFO] Workspace tools : " + ", ".join(WORKSPACE_TOOL_NAMES))
-    print(f"[INFO] Auto-index config : {app.config.managed_repositories_path}")
+    print(f"[INFO] MCP role : {role}")
+    if role == "gateway":
+        print(f"[INFO] Devices config : {app.config.devices_path}")
+    else:
+        print("[INFO] Search tools : " + ", ".join(SEARCH_TOOL_NAMES))
+        print("[INFO] File edit tools : " + ", ".join(FILE_EDIT_TOOL_NAMES))
+        print("[INFO] Workspace tools : " + ", ".join(WORKSPACE_TOOL_NAMES))
+        print(f"[INFO] Auto-index config : {app.config.managed_repositories_path}")
 
     match transport:
         case Transport.STDIO.value:
             server.run(transport=Transport.STDIO.value, show_banner=False)
         case Transport.SSE.value | Transport.STREAMABLE_HTTP.value:
-            server.run(transport=transport, host=host, port=port, show_banner=False)
+            kwargs = {}
+            if role in {"node", "gateway"} and not app.config.oauth_enabled:
+                from starlette.middleware import Middleware
+                from session_context import McpSessionContextMiddleware
+                kwargs["middleware"] = [Middleware(McpSessionContextMiddleware)]
+            server.run(transport=transport, host=host, port=port, show_banner=False, **kwargs)
         case _:
             raise ValueError(f"Invalid transport: {transport}")
 

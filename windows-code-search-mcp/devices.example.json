@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "devices": [
+    {
+      "device_id": "main_desktop",
+      "name": "Main desktop",
+      "host": "192.168.5.120",
+      "ssh_user": "user",
+      "remote_mcp_port": 18000,
+      "local_forward_port": 18101,
+      "enabled": true
+    },
+    {
+      "device_id": "laptop",
+      "name": "Laptop",
+      "host": "192.168.5.130",
+      "ssh_user": "user",
+      "remote_mcp_port": 18000,
+      "local_forward_port": 18102,
+      "enabled": true
+    }
+  ]
+}

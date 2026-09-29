@@ -32,7 +32,7 @@ def build_config(host: str, port: int) -> Config:
         mode=os.getenv("MODE", "local").lower(),
         search_engine_dir=os.getenv(
             "SEARCH_ENGINE_DIR",
-            r"E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp",
+            str(server_root().parent / "ripgrep-treesitter-qdrant-mcp"),
         ).strip(),
         node_exe=os.getenv("NODE_EXE", "node").strip() or "node",
         engine_timeout_seconds=int(os.getenv("SEARCH_ENGINE_TIMEOUT_SECONDS", "600")),
@@ -65,4 +65,7 @@ def build_config(host: str, port: int) -> Config:
         vscode_bridge_host=os.getenv("VSCODE_BRIDGE_HOST", "127.0.0.1").strip() or "127.0.0.1",
         vscode_bridge_port=int(os.getenv("VSCODE_BRIDGE_PORT", "8876")),
         vscode_bridge_token=os.getenv("VSCODE_BRIDGE_TOKEN", "").strip(),
+        role=os.getenv("MCP_ROLE", "standalone").strip().lower(),
+        device_id=os.getenv("MCP_DEVICE_ID", "").strip(),
+        devices_path=os.getenv("MCP_DEVICES_PATH", str(server_root() / "devices.json")).strip(),
     )

@@ -66,6 +66,9 @@ class Config:
     vscode_bridge_host: str = field(default="127.0.0.1")
     vscode_bridge_port: int = field(default=8876)
     vscode_bridge_token: str = field(default="")
+    role: str = "standalone"
+    device_id: str = ""
+    devices_path: str = ""
 
 
 class Transport(Enum):

@@ -7,6 +7,10 @@ Single MCP server that combines:
 
 It reuses the Windows-MCP OAuth environment format and does not modify the original `Windows-MCP` source tree.
 
+For multiple devices, use `MCP_ROLE=node` on each Windows machine and `MCP_ROLE=gateway`
+at the public endpoint. Standalone remains the default. See [distributed setup](DISTRIBUTED_MCP_SETUP.md)
+for the node/gateway launchers, SSH configuration, validation and operational limits.
+
 ## Files and packages
 
 - `server.py` - integrated FastMCP server entrypoint
@@ -21,6 +25,7 @@ It reuses the Windows-MCP OAuth environment format and does not modify the origi
 - `vscode_bridge/` - internal bridge package for bridge models, state, transport, and server orchestration
 - `utils/` - extracted helper modules for normalization and file-range behavior
 - `repo_manager.py` - local folder-picker GUI for managed repo paths
+- `DISTRIBUTED_MCP_IMPLEMENTATION_PLAN.md` - implementation plan for gateway/node deployment across multiple devices
 - `managed-repositories.json` - local persisted repo config
 - `oauth-state.json` - local persisted OAuth provider state
 - `vscode-bridge-extension` - starter VS Code extension for context-window and IDE bridge sync
@@ -364,7 +369,6 @@ Until interactive runtimes become session-scoped, document the edit contract as:
 - re-read the file after each successful write before issuing another edit
 
 That contract does not eliminate conflicts, but it makes multi-chat edits predictable, reviewable, and recoverable.
-
 
 
 

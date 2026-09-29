@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import asdict
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -491,7 +492,7 @@ class SearchExtension:
             ),
         )
         async def server_health() -> str:
-            result = run_engine_tool(context, "server_health", {})
+            result = await asyncio.to_thread(run_engine_tool, context, "server_health", {})
             if isinstance(result, dict):
                 result["autoIndexConfigPath"] = context.config.managed_repositories_path
                 result["autoIndexRepositories"] = [asdict(item) for item in await context.get_auto_indexer().load_repositories()]
@@ -597,6 +598,4 @@ class SearchExtension:
 
     async def stop(self, context: ServerContext) -> None:
         return None
-
-
 

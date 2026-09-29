@@ -1,0 +1,4 @@
+# Validated proxy/provider API. Gateway also reads the sibling Windows-MCP auth source.
+fastmcp==3.0.1
+click>=8.2.1,<9
+requests>=2.32.3,<3
