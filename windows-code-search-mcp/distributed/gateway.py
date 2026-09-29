@@ -17,7 +17,7 @@ from .health import monitor_node
 from .node_connection import NodeConnection
 from .registry import DeviceRegistry
 from .search import search_devices
-from .tunnel_manager import TunnelManager, resolve_ssh
+from .tunnel_manager import LocalEndpointManager, TunnelManager, resolve_ssh
 
 
 def positive_setting(name: str, default: float) -> float:
@@ -39,8 +39,12 @@ class GatewayApp(PublicServerMixin):
             d.device_id: connection_factory(d, health_timeout=health_timeout, call_timeout=call_timeout)
             for d in self.registry.enabled
         }
-        executable = resolve_ssh() if self.connections else ""
-        self.tunnels = {d.device_id: tunnel_factory(d, executable) for d in self.registry.enabled}
+        ssh_devices = tuple(d for d in self.registry.enabled if d.transport == "ssh")
+        executable = resolve_ssh() if ssh_devices else ""
+        self.tunnels = {
+            d.device_id: (tunnel_factory(d, executable) if d.transport == "ssh" else LocalEndpointManager(d))
+            for d in self.registry.enabled
+        }
         self._monitors = []
 
     def build(self) -> FastMCP:
@@ -82,9 +86,10 @@ class GatewayApp(PublicServerMixin):
         if device is None:
             raise ValueError(f"Unknown device: {device_id}")
         if not device.enabled:
-            return {"device_id": device_id, "name": device.name, "enabled": False, "state": "disabled"}
+            return {"device_id": device_id, "name": device.name, "transport": device.transport,
+                    "enabled": False, "state": "disabled"}
         tunnel = self.tunnels[device_id]
-        return {"device_id": device_id, "name": device.name, "enabled": True,
+        return {"device_id": device_id, "name": device.name, "transport": device.transport, "enabled": True,
                 **asdict(self.connections[device_id].status), "tunnel_error": tunnel.last_error}
 
     @asynccontextmanager

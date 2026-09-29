@@ -52,14 +52,21 @@ provider; Windows desktop dependencies, Node.js and indexes are not used by the 
 Set `PYTHON_EXE` or pass `-PythonExe` when using a different environment.
 
 Copy `devices.example.json` to `devices.json` and replace the example host addresses and
-SSH usernames. Machine-specific `devices.json` is ignored by Git. The example config
-creates local forwards 18101 and 18102 to the nodes' loopback port 18000. Do not run manual
-tunnels on the same ports while the gateway's supervisors own them. The gateway HTTP port
-must also differ from every forwarded port.
+SSH usernames. Machine-specific `devices.json` is ignored by Git. Each device may use
+`"transport": "ssh"` (the default) or `"transport": "local"`.
 
-Use `ssh_port` for nondefault SSH ports. Use the gateway account's SSH config/agent for
-IdentityFile/key selection. Do not place passwords, private keys or OAuth secrets in the
-device registry. Optional `allowed_tools` accepts an exact list such as:
+For `ssh`, `local_forward_port` is the gateway-side SSH forward and `remote_mcp_port` is the
+node's loopback listener. Do not run manual tunnels on the same forwarded ports while the
+gateway's supervisors own them. Use `ssh_port` for nondefault SSH ports and the gateway
+account's SSH config/agent for IdentityFile/key selection.
+
+For `local`, the node is already on the gateway machine: set `host` to `127.0.0.1`, set
+`ssh_user` to a harmless local label such as `local`, and set `local_forward_port` equal to
+`remote_mcp_port`. No SSH process is created. This is the preferred way to expose the
+gateway PC's own shell, desktop and code-search runtime without SSHing back into itself.
+The gateway HTTP port must differ from every node/forwarded port.
+
+Do not place passwords, private keys or OAuth secrets in the device registry. Optional `allowed_tools` accepts an exact list such as:
 
 ```json
 "allowed_tools": ["hybrid_code_search", "get_file_range", "list_indexed_repositories"]

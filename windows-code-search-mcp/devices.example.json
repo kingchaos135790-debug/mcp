@@ -4,15 +4,17 @@
     {
       "device_id": "main_desktop",
       "name": "Main desktop",
-      "host": "192.168.5.120",
-      "ssh_user": "user",
-      "remote_mcp_port": 18000,
-      "local_forward_port": 18101,
+      "transport": "local",
+      "host": "127.0.0.1",
+      "ssh_user": "local",
+      "remote_mcp_port": 18001,
+      "local_forward_port": 18001,
       "enabled": true
     },
     {
       "device_id": "laptop",
       "name": "Laptop",
+      "transport": "ssh",
       "host": "192.168.5.130",
       "ssh_user": "user",
       "remote_mcp_port": 18000,

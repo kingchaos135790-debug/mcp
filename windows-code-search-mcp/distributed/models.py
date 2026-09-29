@@ -21,11 +21,14 @@ class DeviceConfig:
     ssh_port: int = 22
     enabled: bool = True
     allowed_tools: list[str] | None = None
+    transport: str = "ssh"
 
     def __post_init__(self) -> None:
         validate_device_id(self.device_id)
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("name must not be empty")
+        if self.transport not in {"ssh", "local"}:
+            raise ValueError("transport must be ssh or local")
         if not isinstance(self.host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]*", self.host):
             raise ValueError("host must be a hostname or IP address, not SSH options")
         if not isinstance(self.ssh_user, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.\\-]*", self.ssh_user):
@@ -34,6 +37,11 @@ class DeviceConfig:
             value = getattr(self, key)
             if type(value) is not int or not 1 <= value <= 65535:
                 raise ValueError(f"{key} must be an integer between 1 and 65535")
+        if self.transport == "local":
+            if self.host.lower() not in {"127.0.0.1", "localhost"}:
+                raise ValueError("local transport must use a loopback host")
+            if self.local_forward_port != self.remote_mcp_port:
+                raise ValueError("local transport requires local_forward_port to equal remote_mcp_port")
         if type(self.enabled) is not bool:
             raise ValueError("enabled must be a boolean")
         if self.allowed_tools is not None and (

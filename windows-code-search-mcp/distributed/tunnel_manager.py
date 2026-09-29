@@ -18,6 +18,8 @@ def resolve_ssh() -> str:
 
 
 def tunnel_command(executable: str, device: DeviceConfig) -> list[str]:
+    if device.transport != "ssh":
+        raise ValueError("SSH tunnel requested for a non-SSH device")
     return [
         executable, "-N", "-T", "-o", "BatchMode=yes",
         "-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no",
@@ -32,6 +34,20 @@ def tunnel_command(executable: str, device: DeviceConfig) -> list[str]:
         "-L", f"127.0.0.1:{device.local_forward_port}:127.0.0.1:{device.remote_mcp_port}",
         device.host,
     ]
+
+
+class LocalEndpointManager:
+    """No-op transport manager for a node already listening on local loopback."""
+
+    def __init__(self, device: DeviceConfig) -> None:
+        self.device = device
+        self.last_error: str | None = None
+
+    def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
 
 
 class TunnelManager:

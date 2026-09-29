@@ -42,12 +42,17 @@ def check(role: str, host: str, port: int, require_ssh: bool = False) -> list[di
         return version
     record("FastMCP", fastmcp_version)
     if role == "gateway":
+        loaded = []
         def registry():
             registry = DeviceRegistry.load(config.devices_path)
-            require(all(d.local_forward_port != port for d in registry.enabled), "Gateway and forwarded ports conflict")
+            loaded.append(registry)
+            require(all(d.local_forward_port != port for d in registry.enabled), "Gateway and node/forwarded ports conflict")
             return f"{len(registry.enabled)} enabled devices"
         record("device registry", registry)
-        record("OpenSSH client", resolve_ssh)
+        if loaded and any(d.transport == "ssh" for d in loaded[0].enabled):
+            record("OpenSSH client", resolve_ssh)
+        else:
+            results.append({"check": "OpenSSH client", "ok": True, "detail": "not required"})
         return results
 
     for distribution in ("comtypes", "pywin32", "pillow", "watchfiles", "posthog", "dxcam"):

@@ -80,6 +80,22 @@ class RegistryTests(unittest.TestCase):
             self.assertIn(option, command)
         self.assertIn("127.0.0.1:18101:127.0.0.1:18000", command)
 
+    def test_local_transport_is_loopback_only_and_skips_ssh(self):
+        local = replace(device(port=18001), transport="local", host="127.0.0.1",
+                        ssh_user="local", remote_mcp_port=18001)
+        self.assertEqual(local.url, "http://127.0.0.1:18001/mcp")
+        with self.assertRaises(ValueError):
+            replace(local, host="192.168.5.20")
+        with self.assertRaises(ValueError):
+            replace(local, local_forward_port=18002)
+        with self.assertRaises(ValueError):
+            replace(local, transport="rdp")
+
+        config = Config(mode="local", search_engine_dir=".", role="gateway")
+        with patch("distributed.gateway.resolve_ssh", side_effect=AssertionError("SSH should not be resolved")):
+            app = GatewayApp(config, registry=DeviceRegistry([local]))
+        self.assertEqual(app.tunnels[local.device_id].__class__.__name__, "LocalEndpointManager")
+
 
 class TunnelTests(unittest.IsolatedAsyncioTestCase):
     async def test_premature_exit_has_bounded_backoff(self):
