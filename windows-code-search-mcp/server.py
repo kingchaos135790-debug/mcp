@@ -13,12 +13,7 @@ import fastmcp
 
 import bootstrap  # noqa: F401
 
-from server_config import FILE_EDIT_TOOL_NAMES, SEARCH_TOOL_NAMES, Transport, build_config, parse_bool
-
-try:
-    from server_config import WORKSPACE_TOOL_NAMES
-except ImportError:  # Compatibility with tests that stub server_config.
-    WORKSPACE_TOOL_NAMES: list[str] = []
+from server_config import FILE_EDIT_TOOL_NAMES, SEARCH_TOOL_NAMES, WORKSPACE_TOOL_NAMES, Transport, build_config, parse_bool
 from session_context import get_current_boot_id, get_current_chat_session_id, normalize_chat_session_id, set_current_boot_id
 
 LOGGER = logging.getLogger(__name__)
@@ -163,10 +158,7 @@ def create_server_app(host: str, port: int):
 
     if config.mode not in {"", "local"}:
         raise ValueError("Only MODE=local is supported by windows-code-search-mcp")
-    extensions = [SearchExtension(), FileEditExtension()]
-    if WorkspaceSummaryExtension is not None:
-        extensions.append(WorkspaceSummaryExtension())
-    extensions.append(WindowsDesktopExtension())
+    extensions = [SearchExtension(), FileEditExtension(), WorkspaceSummaryExtension(), WindowsDesktopExtension()]
     return ServerApp(config, extensions)
 
 

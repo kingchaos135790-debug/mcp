@@ -5,6 +5,7 @@ windows-code-search-mcp/devices.json
 windows-code-search-mcp/devices.local*.json
 windows-code-search-mcp/managed-repositories.json
 launch_mcp_server.bat
+mcp.paths.env
 cloudflare.bat
 cloudflare.exe
 mcp_inspector.bat

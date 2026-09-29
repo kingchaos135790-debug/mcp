@@ -106,7 +106,7 @@ Desktop/UI automation tools such as `Screenshot`, `Snapshot`, `Click`, `Type`, `
 
 - validates the integrated server, Windows-MCP, search engine, and project-local GitNexus runtime paths
 - exports `QDRANT_URL`, `QDRANT_COLLECTION`, and `INDEX_ROOT`
-- sets `INDEX_ROOT=E:\\mcp-index-data` for search manifests and local lexical indexes
+- receives `INDEX_ROOT` from the shared `mcp.paths.env` configuration for search manifests and local lexical indexes
 - builds the TypeScript search core before starting the Python MCP host
 - logs runtime diagnostics to the console, and to `windows-code-search-mcp-runtime.log` when `MCP_LOG_DIR` is set
 - logs startup index status for each managed repository, including incremental `changedFiles`, `unchangedFiles`, and `deletedFiles`
@@ -168,11 +168,11 @@ Behavior:
 
 Use `add_indexed_repository` and `remove_indexed_repository` for agent-driven repository enrollment and removal. Other lifecycle or diagnostic operations can still be performed through the managed config, `open_windows_code_search_repo_manager.bat`, launcher configuration, or separate index-management tooling.
 
-Search/index data locations on this machine:
+Search/index data locations:
 
-- managed repo config: `E:\\Program Files\\mcp\\windows-code-search-mcp\\managed-repositories.json`
-- manifest and lexical index root: `E:\\mcp-index-data`
-- GitNexus graph and registry root: `E:\mcp-index-data\gitnexus`
+- managed repo config: `managed-repositories.json` beside the server
+- manifest and lexical index root: `<INDEX_ROOT>` from `mcp.paths.env`
+- GitNexus graph and registry root: `<INDEX_ROOT>\gitnexus`
 
 ## Authentication, restart behavior, and multi-chat isolation
 

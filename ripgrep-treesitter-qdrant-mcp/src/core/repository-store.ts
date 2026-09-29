@@ -55,7 +55,6 @@ export type IndexedRepository = {
   fileCount: number;
   manifestPath: string;
   localLexicalIndexPath: string;
-  zoektIndexRoot: string;
 };
 
 type RepositoryRegistry = {
@@ -90,7 +89,6 @@ export function getRepoStoragePaths(config: SearchEngineConfig, repoRoot: string
     repoDir,
     manifestPath: path.join(repoDir, "manifest.json"),
     localLexicalIndexPath: path.join(repoDir, "local-lexical-index.json"),
-    zoektIndexRoot: path.join(repoDir, "zoekt"),
   };
 }
 
@@ -157,7 +155,6 @@ async function scanRepositoriesFromDisk(config: SearchEngineConfig): Promise<Ind
         fileCount: manifest.fileCount,
         manifestPath,
         localLexicalIndexPath: path.join(config.repositoriesRoot, entry.name, "local-lexical-index.json"),
-        zoektIndexRoot: path.join(config.repositoriesRoot, entry.name, "zoekt"),
       });
     }
 

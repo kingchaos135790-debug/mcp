@@ -46,6 +46,7 @@ def parse_bool(value: str | None, default: bool = False) -> bool:
 
 server_config.SEARCH_TOOL_NAMES = []
 server_config.FILE_EDIT_TOOL_NAMES = []
+server_config.WORKSPACE_TOOL_NAMES = []
 server_config.Transport = Transport
 server_config.build_config = lambda host, port: None
 server_config.parse_bool = parse_bool
@@ -55,6 +56,7 @@ server_extensions = types.ModuleType("server_extensions")
 server_extensions.SearchExtension = object
 server_extensions.FileEditExtension = object
 server_extensions.WindowsDesktopExtension = object
+server_extensions.WorkspaceSummaryExtension = object
 sys.modules["server_extensions"] = server_extensions
 
 session_context = types.ModuleType("session_context")

@@ -1,23 +1,46 @@
 @echo off
 rem ============================================================
-rem  launch_mcp_server.example.bat
-rem  Copy this file to launch_mcp_server.bat and adjust the
-rem  paths / OAuth settings below to match your local machine.
+rem  Runtime paths are loaded from mcp.paths.env.
 rem ============================================================
 setlocal EnableExtensions EnableDelayedExpansion
 
 set "MCP_ROOT=%~dp0"
 
-set "MCP_LAUNCHER_NAME=%~n0"
-
 if "%MCP_ROOT:~-1%"=="\" set "MCP_ROOT=%MCP_ROOT:~0,-1%"
 
+set "MCP_PATHS_FILE=%MCP_ROOT%\mcp.paths.env"
+if not exist "%MCP_PATHS_FILE%" (
+  echo ERROR: Shared path config not found: %MCP_PATHS_FILE%
+  echo Copy mcp.paths.env.example to mcp.paths.env and edit the paths.
+  pause
+  exit /b 1
+)
+for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%MCP_PATHS_FILE%") do set "%%A=%%B"
+if not defined MCP_DIR (
+  echo ERROR: MCP_DIR is missing from %MCP_PATHS_FILE%
+  pause
+  exit /b 1
+)
+if not defined WINDOWS_MCP_DIR (
+  echo ERROR: WINDOWS_MCP_DIR is missing from %MCP_PATHS_FILE%
+  pause
+  exit /b 1
+)
+if not defined SEARCH_ENGINE_DIR (
+  echo ERROR: SEARCH_ENGINE_DIR is missing from %MCP_PATHS_FILE%
+  pause
+  exit /b 1
+)
+if not defined INDEX_ROOT (
+  echo ERROR: INDEX_ROOT is missing from %MCP_PATHS_FILE%
+  pause
+  exit /b 1
+)
+for %%I in ("%MCP_ROOT%\%MCP_DIR%") do set "MCP_DIR=%%~fI"
+for %%I in ("%MCP_ROOT%\%WINDOWS_MCP_DIR%") do set "WINDOWS_MCP_DIR=%%~fI"
+for %%I in ("%MCP_ROOT%\%SEARCH_ENGINE_DIR%") do set "SEARCH_ENGINE_DIR=%%~fI"
+set "MCP_LAUNCHER_NAME=%~n0"
 
-rem ===== Paths — adjust for your machine =====
-set "MCP_DIR=%MCP_ROOT%\windows-code-search-mcp"
-set "WINDOWS_MCP_DIR=%MCP_ROOT%\Windows-MCP"
-set "SEARCH_ENGINE_DIR=%MCP_ROOT%\ripgrep-treesitter-qdrant-mcp"
-set "INDEX_ROOT=C:\mcp-index-data"
 set "AUTO_INDEX_CONFIG_PATH=%MCP_DIR%\managed-repositories.json"
 set "PYTHON_EXE=%WINDOWS_MCP_DIR%\.venv\Scripts\python.exe"
 set "MCP_HOST=127.0.0.1"

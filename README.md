@@ -40,12 +40,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
 Use the same approach for Python launchers by replacing `'%TOOL_EXE%'` with the full Python executable path.
 
+## Shared path configuration
+
+Both root launchers read their shared paths from `mcp.paths.env`. Create it with
+`Copy-Item .\mcp.paths.env.example .\mcp.paths.env`, then set `INDEX_ROOT` there.
+The local config is ignored by Git, so the server and repository manager always
+use the same index location. Keep the index directory outside watched repositories.
+
 ## Local secrets
 
 Do not put OAuth client secrets directly in tracked launcher scripts.
-
-Use `launch_mcp_server.local.bat` for local-only overrides such as `OAUTH_CLIENT_SECRET`.
-
-- `launch_mcp_server.local.bat` is ignored by Git.
-- `launch_mcp_server.bat` loads `launch_mcp_server.local.bat` automatically when it exists.
-- `launch_mcp_server.local.example.bat` shows the expected format for local overrides.

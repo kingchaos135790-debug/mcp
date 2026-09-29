@@ -25,7 +25,6 @@ export function getRepoStoragePaths(config, repoRoot) {
         repoDir,
         manifestPath: path.join(repoDir, "manifest.json"),
         localLexicalIndexPath: path.join(repoDir, "local-lexical-index.json"),
-        zoektIndexRoot: path.join(repoDir, "zoekt"),
     };
 }
 async function readJsonFile(filePath) {
@@ -86,7 +85,6 @@ async function scanRepositoriesFromDisk(config) {
                 fileCount: manifest.fileCount,
                 manifestPath,
                 localLexicalIndexPath: path.join(config.repositoriesRoot, entry.name, "local-lexical-index.json"),
-                zoektIndexRoot: path.join(config.repositoriesRoot, entry.name, "zoekt"),
             });
         }
         return repositories;

@@ -1,18 +1,18 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 export function getSearchEngineConfig() {
     const qdrantUrl = process.env.QDRANT_URL || "http://127.0.0.1:16333";
     const qdrantCollection = process.env.QDRANT_COLLECTION || "code_chunks_bge_base_en_v1_5";
-    const indexRoot = path.resolve(process.env.INDEX_ROOT || "E:/mcp-index-data");
+    const defaultIndexRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../mcp-index-data");
+    const indexRoot = path.resolve(process.env.INDEX_ROOT || defaultIndexRoot);
     const repositoriesRoot = path.join(indexRoot, "repositories");
     const registryPath = path.join(indexRoot, "repositories.json");
-    const localLexicalIndexPath = path.join(indexRoot, "local-lexical-index.json");
     return {
         qdrantUrl,
         qdrantCollection,
         indexRoot,
         repositoriesRoot,
         registryPath,
-        localLexicalIndexPath,
     };
 }
 export function clampLimit(limit, fallback = 8, max = 20) {

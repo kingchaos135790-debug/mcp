@@ -1,5 +1,6 @@
 import path from "node:path";
 import { env, pipeline } from "@huggingface/transformers";
+import { fileURLToPath } from "node:url";
 
 export type EmbeddingDevice = "cpu" | "dml";
 
@@ -38,7 +39,8 @@ function embeddingDevice(value: string | undefined): EmbeddingDevice {
 }
 
 export function getEmbeddingRuntimeConfig(): EmbeddingRuntimeConfig {
-  const indexRoot = path.resolve(process.env.INDEX_ROOT || "E:/mcp-index-data");
+  const defaultIndexRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../mcp-index-data");
+  const indexRoot = path.resolve(process.env.INDEX_ROOT || defaultIndexRoot);
   return {
     model: (process.env.EMBEDDING_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL,
     dimensions: positiveInt(process.env.EMBEDDING_DIMENSIONS, DEFAULT_DIMENSIONS),

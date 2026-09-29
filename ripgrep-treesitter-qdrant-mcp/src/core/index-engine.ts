@@ -460,7 +460,6 @@ export async function indexRepository(repoRootInput?: string, options: IndexRepo
     fileCount: documents.length,
     manifestPath: storage.manifestPath,
     localLexicalIndexPath: storage.localLexicalIndexPath,
-    zoektIndexRoot: storage.zoektIndexRoot,
   });
 
   const ripgrepAvailable = await hasRipgrep();

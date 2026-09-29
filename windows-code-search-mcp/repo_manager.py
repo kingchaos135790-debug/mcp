@@ -19,11 +19,14 @@ DEFAULT_CONFIG_PATH = Path(
 DEFAULT_SEARCH_ENGINE_DIR = Path(
     os.getenv(
         "SEARCH_ENGINE_DIR",
-        r"E:\Program Files\mcp\ripgrep-treesitter-qdrant-mcp",
+        Path(__file__).resolve().parent.parent / "ripgrep-treesitter-qdrant-mcp",
     )
 )
 DEFAULT_NODE_EXE = os.getenv("NODE_EXE", "node")
-DEFAULT_INDEX_ROOT = os.getenv("INDEX_ROOT", r"E:\mcp-index-data")
+DEFAULT_INDEX_ROOT = os.getenv(
+    "INDEX_ROOT",
+    str(Path(__file__).resolve().parents[2] / "mcp-index-data"),
+)
 def _status_prefix() -> str:
     return f"INDEX_ROOT: {DEFAULT_INDEX_ROOT}"
 

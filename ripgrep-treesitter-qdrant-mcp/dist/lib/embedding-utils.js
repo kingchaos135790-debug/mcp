@@ -1,5 +1,6 @@
 import path from "node:path";
 import { env, pipeline } from "@huggingface/transformers";
+import { fileURLToPath } from "node:url";
 const DEFAULT_MODEL = "Xenova/bge-base-en-v1.5";
 const DEFAULT_DIMENSIONS = 768;
 const DEFAULT_BATCH_SIZE = 16;
@@ -20,7 +21,8 @@ function embeddingDevice(value) {
     return device;
 }
 export function getEmbeddingRuntimeConfig() {
-    const indexRoot = path.resolve(process.env.INDEX_ROOT || "E:/mcp-index-data");
+    const defaultIndexRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../mcp-index-data");
+    const indexRoot = path.resolve(process.env.INDEX_ROOT || defaultIndexRoot);
     return {
         model: (process.env.EMBEDDING_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL,
         dimensions: positiveInt(process.env.EMBEDDING_DIMENSIONS, DEFAULT_DIMENSIONS),

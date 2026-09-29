@@ -387,7 +387,6 @@ export async function listIndexedCodebases() {
       indexedAt: repository.indexedAt,
       fileCount: repository.fileCount,
       localLexicalIndexPath: repository.localLexicalIndexPath,
-      zoektIndexRoot: repository.zoektIndexRoot,
       coverage: manifest?.coverage,
       freshnessStrategy: manifest?.freshnessStrategy,
       gitnexusIndex: manifest?.gitnexusIndex,
@@ -410,7 +409,6 @@ export async function searchEngineHealth() {
     indexRoot: config.indexRoot,
     repositoriesRoot: config.repositoriesRoot,
     registryPath: config.registryPath,
-    legacyLocalLexicalIndexPath: config.localLexicalIndexPath,
     repositoryCount: repositories.length,
     repositories: await Promise.all(repositories.map(async (repository) => {
       const manifest = await readRepoManifest(repository.manifestPath);

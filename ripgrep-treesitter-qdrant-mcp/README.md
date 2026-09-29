@@ -127,7 +127,7 @@ node .\dist\cli\run-core.js index_repository $payload
 Behavior:
 
 - builds a GitNexus graph and full-text index without embeddings
-- writes per-repository manifests under `E:\mcp-index-data\repositories\<repoId>`
+- writes per-repository manifests under `<INDEX_ROOT>\repositories\<repoId>`
 - writes a per-repository local lexical index
 - uses incremental updates for unchanged, changed, and deleted indexed files by default
 - reports indexed candidates separately from excluded repository files
@@ -260,12 +260,12 @@ These warnings are diagnostic. They do not automatically search excluded files.
 - lexical fallback indexes are stored per repository
 - `list_indexed_repositories` and `server_health` expose stored coverage and freshness metadata when available
 
-Current machine data locations:
+Data locations are derived from `INDEX_ROOT`, which the root launchers read from `mcp.paths.env`:
 
-- manifest and lexical index root: `E:\mcp-index-data`
-- repository registry: `E:\mcp-index-data\repositories.json`
-- per-repo manifests: `E:\mcp-index-data\repositories\<repoId>`
-- GitNexus registry and graph storage: `E:\mcp-index-data\gitnexus`
+- manifest and lexical index root: `<INDEX_ROOT>`
+- repository registry: `<INDEX_ROOT>\repositories.json`
+- per-repo manifests: `<INDEX_ROOT>\repositories\<repoId>`
+- GitNexus registry and graph storage: `<INDEX_ROOT>\gitnexus`
 
 ## How this repo is intended to be used
 

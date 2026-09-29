@@ -21,7 +21,8 @@ def path_is_within(candidate: str, root: str) -> bool:
 
 
 def index_root_display() -> str:
-    return str(Path(os.getenv("INDEX_ROOT", r"E:\mcp-index-data")).expanduser().resolve())
+    default_root = Path(__file__).resolve().parents[3] / "mcp-index-data"
+    return str(Path(os.getenv("INDEX_ROOT", str(default_root))).expanduser().resolve())
 
 
 def coerce_int(value: object) -> int:

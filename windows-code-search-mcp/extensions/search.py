@@ -570,7 +570,8 @@ class SearchExtension:
         def list_indexed_repositories() -> str:
             # Repository discovery is registry-only. Avoid spawning the Node search
             # engine (and loading its search/embedding dependencies) just to list repos.
-            index_root = Path(os.getenv("INDEX_ROOT", r"E:\mcp-index-data"))
+            default_index_root = Path(__file__).resolve().parents[3] / "mcp-index-data"
+            index_root = Path(os.getenv("INDEX_ROOT", str(default_index_root)))
             registry_path = index_root / "repositories.json"
             try:
                 payload = json.loads(registry_path.read_text(encoding="utf-8"))
