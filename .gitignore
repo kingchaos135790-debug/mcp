@@ -3,6 +3,7 @@ windows-code-search-mcp/__pycache__/
 windows-code-search-mcp/oauth-state.json
 windows-code-search-mcp/devices.json
 windows-code-search-mcp/devices.local*.json
+windows-code-search-mcp/node-schema-cache.json
 windows-code-search-mcp/managed-repositories.json
 launch_mcp_server.bat
 mcp.paths.env

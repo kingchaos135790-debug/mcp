@@ -17,6 +17,7 @@ from .health import monitor_node
 from .node_connection import NodeConnection
 from .registry import DeviceRegistry
 from .search import search_devices
+from .schema_cache import NodeSchemaCache
 from .tunnel_manager import LocalEndpointManager, TunnelManager, resolve_ssh
 
 
@@ -28,15 +29,31 @@ def positive_setting(name: str, default: float) -> float:
 
 
 class GatewayApp(PublicServerMixin):
-    def __init__(self, config, *, registry=None, connection_factory=NodeConnection, tunnel_factory=TunnelManager):
+    def __init__(
+        self,
+        config,
+        *,
+        registry=None,
+        connection_factory=NodeConnection,
+        tunnel_factory=TunnelManager,
+        schema_cache=None,
+    ):
         self.config = config
         self.registry = registry if registry is not None else DeviceRegistry.load(config.devices_path)
         self.health_interval = positive_setting("MCP_HEALTH_INTERVAL_SECONDS", 15)
         self.search_timeout = positive_setting("MCP_DISTRIBUTED_SEARCH_TIMEOUT_SECONDS", 60)
         health_timeout = positive_setting("MCP_HEALTH_TIMEOUT_SECONDS", 5)
         call_timeout = positive_setting("MCP_NODE_CALL_TIMEOUT_SECONDS", 600)
+        if schema_cache is None and config.devices_path:
+            schema_cache = NodeSchemaCache.for_devices_path(config.devices_path)
+        self.schema_cache = schema_cache
         self.connections = {
-            d.device_id: connection_factory(d, health_timeout=health_timeout, call_timeout=call_timeout)
+            d.device_id: connection_factory(
+                d,
+                health_timeout=health_timeout,
+                call_timeout=call_timeout,
+                schema_cache=self.schema_cache,
+            )
             for d in self.registry.enabled
         }
         ssh_devices = tuple(d for d in self.registry.enabled if d.transport == "ssh")
@@ -67,10 +84,10 @@ class GatewayApp(PublicServerMixin):
 
         @mcp.tool(annotations=readonly)
         async def device_health(device_id: str) -> dict:
-            """Refresh one device's identity, tool schemas and health without affecting other devices."""
+            """Verify one device's identity/readiness; schemas refresh only if its contract changed."""
             self.device_status(device_id)  # Validate before looking up a connection.
             if device_id in self.connections:
-                await self.connections[device_id].refresh()
+                await self.connections[device_id].check_health()
             return self.device_status(device_id)
 
         @mcp.tool(annotations=readonly)
@@ -97,7 +114,7 @@ class GatewayApp(PublicServerMixin):
         try:
             for tunnel in self.tunnels.values():
                 tunnel.start()
-            await asyncio.gather(*(c.refresh() for c in self.connections.values()))
+            await asyncio.gather(*(c.check_health() for c in self.connections.values()))
             self._monitors = [asyncio.create_task(monitor_node(c, self.health_interval))
                               for c in self.connections.values()]
             yield
@@ -109,4 +126,5 @@ class GatewayApp(PublicServerMixin):
                     task.cancel()
                 await asyncio.gather(*self._monitors, return_exceptions=True)
                 self._monitors.clear()
+                await asyncio.gather(*(c.stop() for c in self.connections.values()), return_exceptions=True)
                 await asyncio.gather(*(t.stop() for t in self.tunnels.values()), return_exceptions=True)

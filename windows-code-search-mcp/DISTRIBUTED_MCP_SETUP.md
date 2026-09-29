@@ -105,6 +105,14 @@ gateway roles select Streamable HTTP automatically. Source/search paths derive f
 installation directory; existing `WINDOWS_MCP_DIR`, `SEARCH_ENGINE_DIR`, `NODE_EXE` and
 `AUTO_INDEX_CONFIG_PATH` overrides remain available.
 
+The gateway persists each node's last verified identity and MCP tool schemas in
+`node-schema-cache.json` next to `devices.json` by default. Cached schemas are restored before
+network health checks, so a temporarily offline node keeps a stable namespaced tool surface
+across gateway restarts. Periodic monitoring uses the node's private `/__node_health` route and
+does not call `list_tools`; schema discovery runs only when the node's `tool_contract` hash
+changes, when no verified cache exists, or when an explicit schema refresh is requested.
+Set `MCP_NODE_SCHEMA_CACHE_PATH` to override the cache location.
+
 ## Operation and limits
 
 The gateway exposes `list_devices`, `device_health` and `distributed_code_search`, plus
@@ -127,6 +135,7 @@ node rankings rather than comparing scores from unrelated indexes.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `MCP_DEVICES_PATH` | adjacent `devices.json` | Gateway registry |
+| `MCP_NODE_SCHEMA_CACHE_PATH` | adjacent `node-schema-cache.json` | Persisted last-verified node identity/tool schemas |
 | `MCP_SSH_EXE` | resolved system ssh | Absolute OpenSSH executable override |
 | `MCP_HEALTH_INTERVAL_SECONDS` | 15 | Background refresh interval per node |
 | `MCP_HEALTH_TIMEOUT_SECONDS` | 5 | Identity/schema refresh deadline |

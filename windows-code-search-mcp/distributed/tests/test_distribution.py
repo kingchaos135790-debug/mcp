@@ -21,6 +21,7 @@ from distributed.models import DeviceConfig
 from distributed.node_connection import NodeConnection, VerifiedNodeClient, private_http_client
 from distributed.registry import DeviceRegistry
 from distributed.roles import validate_role
+from distributed.schema_cache import NodeSchemaCache
 from distributed.search import search_devices
 from distributed.tunnel_manager import TunnelManager, tunnel_command
 
@@ -149,12 +150,24 @@ class HttpNode:
         self.fail = False
         self.slow = False
         self.headers = []
+        self.list_tools_calls = 0
+        self.tool_contract = "contract-v1"
         self.port = port
         self.mcp = FastMCP(identity)
 
+        def health_payload() -> dict:
+            return {"device_id": self.identity, "role": "node", "protocol_version": 1,
+                    "tool_contract": self.tool_contract, "search_ready": True}
+
         @self.mcp.tool()
         def node_health() -> dict:
-            return {"device_id": self.identity, "role": "node", "protocol_version": 1, "search_ready": True}
+            return health_payload()
+
+        from starlette.responses import JSONResponse
+
+        @self.mcp.custom_route("/__node_health", methods=["GET"], include_in_schema=False)
+        async def node_health_http(_):
+            return JSONResponse(health_payload())
 
         @self.mcp.tool()
         def PowerShell(command: str) -> str:
@@ -182,6 +195,10 @@ class HttpNode:
         class Capture(Middleware):
             async def on_call_tool(self, context, call_next):
                 owner.headers.append(get_http_headers(include_all=True))
+                return await call_next(context)
+
+            async def on_list_tools(self, context, call_next):
+                owner.list_tools_calls += 1
                 return await call_next(context)
         self.mcp.add_middleware(Capture())
         sock = socket.socket()
@@ -214,6 +231,8 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.beta.stop)
         self.a = NodeConnection(device("alpha", self.alpha.port), health_timeout=10, call_timeout=15)
         self.b = NodeConnection(device("beta", self.beta.port), health_timeout=10, call_timeout=15)
+        self.addAsyncCleanup(self.a.stop)
+        self.addAsyncCleanup(self.b.stop)
 
     async def gateway(self):
         class NoTunnel:
@@ -275,6 +294,35 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PowerShell", {t.name for t in await self.b.list_tools()})
         result = await self.b.call("PowerShell", {"command": "restarted"})
         self.assertEqual(result, "beta:restarted")
+
+    async def test_health_check_skips_schema_fetch_until_contract_changes(self):
+        await self.a.refresh()
+        initial = self.alpha.list_tools_calls
+        self.assertGreater(initial, 0)
+        await self.a.check_health()
+        self.assertEqual(self.alpha.list_tools_calls, initial)
+        self.alpha.tool_contract = "contract-v2"
+        await self.a.check_health()
+        refreshed = self.alpha.list_tools_calls
+        self.assertGreater(refreshed, initial)
+        await self.a.check_health()
+        self.assertEqual(self.alpha.list_tools_calls, refreshed)
+
+    async def test_schema_cache_survives_gateway_restart_while_node_offline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = NodeSchemaCache(Path(folder) / "node-schema-cache.json")
+            live = NodeConnection(self.a.device, health_timeout=10, call_timeout=15, schema_cache=cache)
+            await live.refresh()
+            self.assertIn("PowerShell", {t.name for t in await live.list_tools()})
+            await live.stop()
+            await self.alpha.stop()
+
+            restored = NodeConnection(self.a.device, health_timeout=1, call_timeout=15, schema_cache=cache)
+            self.assertIn("PowerShell", {t.name for t in await restored.list_tools()})
+            await restored.check_health()
+            self.assertEqual(restored.status.state, "offline")
+            self.assertIn("PowerShell", {t.name for t in await restored.list_tools()})
+            self.assertEqual(restored.status.identity.get("device_id"), "alpha")
 
     async def test_allowlist_applies_to_direct_and_aggregate_calls(self):
         self.a.device = replace(self.a.device, allowed_tools=["get_file_range"])
