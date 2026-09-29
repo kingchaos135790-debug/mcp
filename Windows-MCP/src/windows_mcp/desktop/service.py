@@ -16,8 +16,10 @@ from typing import Literal
 from markdownify import markdownify
 from fuzzywuzzy import process
 from time import sleep, time, perf_counter
-from psutil import Process, wait_procs
+from psutil import Process, process_iter, wait_procs
 import win32process
+import win32api
+import win32job
 import subprocess
 import win32gui
 import win32con
@@ -372,43 +374,107 @@ class Desktop:
     def _kill_process_tree(pid: int) -> None:
         """Best-effort termination of a process and descendants.
 
-        On Windows, shell children can inherit stdout/stderr pipe handles. Killing only the
-        immediate PowerShell process may leave a descendant holding the pipe open, which can
-        make timeout handling hang while draining output.
+        PowerShell can exit before a descendant that inherited stdout/stderr. In that case
+        taskkill and Process(pid).children() can both miss the surviving child because the
+        original parent PID no longer exists. Keep a PPID-based fallback so descendants that
+        still remember the exited PowerShell PID are reaped as well.
         """
         if os.name == "nt":
             try:
-                completed = subprocess.run(
+                subprocess.run(
                     ["taskkill", "/PID", str(pid), "/T", "/F"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=5,
                     check=False,
                 )
-                if completed.returncode == 0:
-                    return
             except Exception:
                 pass
 
+        processes_by_pid = {}
+
         try:
             parent = Process(pid)
-            processes = parent.children(recursive=True)
-            processes.append(parent)
+            for process in [*parent.children(recursive=True), parent]:
+                processes_by_pid[process.pid] = process
         except Exception:
-            return
+            pass
 
+        try:
+            children_by_ppid = {}
+            for process in process_iter(["pid", "ppid"]):
+                try:
+                    parent_pid = process.info.get("ppid")
+                    if parent_pid is not None:
+                        children_by_ppid.setdefault(parent_pid, []).append(process)
+                except Exception:
+                    continue
+
+            pending = [pid]
+            visited = set()
+            while pending:
+                parent_pid = pending.pop()
+                for child in children_by_ppid.get(parent_pid, ()):
+                    if child.pid in visited:
+                        continue
+                    visited.add(child.pid)
+                    processes_by_pid[child.pid] = child
+                    pending.append(child.pid)
+        except Exception:
+            pass
+
+        processes = list(processes_by_pid.values())
         for process in processes:
             try:
                 process.kill()
             except Exception:
                 pass
 
+        if processes:
+            try:
+                wait_procs(processes, timeout=3)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _create_process_job(process):
+        """Assign the shell to a Windows Job Object so descendants remain terminable."""
+        if os.name != "nt":
+            return None
+
+        job = None
         try:
-            wait_procs(processes, timeout=3)
+            job = win32job.CreateJobObject(None, "")
+            win32job.AssignProcessToJobObject(job, int(process._handle))
+            return job
+        except Exception:
+            if job is not None:
+                try:
+                    win32api.CloseHandle(job)
+                except Exception:
+                    pass
+            return None
+
+    @staticmethod
+    def _terminate_process_job(job) -> bool:
+        if job is None:
+            return False
+        try:
+            win32job.TerminateJobObject(job, 1)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _close_process_job(job) -> None:
+        if job is None:
+            return
+        try:
+            win32api.CloseHandle(job)
         except Exception:
             pass
 
-    def execute_command(self, command: str, timeout: int = 10) -> tuple[str, int]:
+    def execute_command(self, command: str, timeout: int = 10, cancel_event=None) -> tuple[str, int]:
         def _decode_pipe(value) -> str:
             if isinstance(value, bytes):
                 return value.decode("utf-8", errors="replace")
@@ -486,32 +552,55 @@ class Desktop:
                 creationflags=creationflags,
             )
 
+            job = self._create_process_job(process)
             try:
-                stdout_bytes, stderr_bytes = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self._kill_process_tree(process.pid)
-                try:
-                    stdout_bytes, stderr_bytes = process.communicate(timeout=1)
-                except subprocess.TimeoutExpired:
-                    stdout_bytes, stderr_bytes = b"", b""
-                return (f"Command execution timed out after {timeout} seconds", 1)
+                deadline = perf_counter() + max(0.0, float(timeout))
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        if not self._terminate_process_job(job):
+                            self._kill_process_tree(process.pid)
+                        try:
+                            process.communicate(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            pass
+                        return ("Command execution cancelled", 1)
 
-            stdout = _decode_pipe(stdout_bytes)
-            stderr = _decode_pipe(stderr_bytes)
-            output = stdout
-            if stderr:
-                output = f"{stdout}\n[stderr]\n{stderr}" if stdout else stderr
-            if not output.strip():
-                output = f"[no output] exit code {process.returncode}"
+                    remaining = deadline - perf_counter()
+                    if remaining <= 0:
+                        if not self._terminate_process_job(job):
+                            self._kill_process_tree(process.pid)
+                        try:
+                            process.communicate(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            pass
+                        return (f"Command execution timed out after {timeout} seconds", 1)
 
-            logger.debug(
-                "PowerShell command completed: exit=%s stdout_chars=%s stderr_chars=%s returned_chars=%s",
-                process.returncode,
-                len(stdout),
-                len(stderr),
-                min(len(output), _max_output_chars()),
-            )
-            return (_clamp_output(output), process.returncode)
+                    try:
+                        stdout_bytes, stderr_bytes = process.communicate(
+                            timeout=min(0.25, remaining)
+                        )
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+
+                stdout = _decode_pipe(stdout_bytes)
+                stderr = _decode_pipe(stderr_bytes)
+                output = stdout
+                if stderr:
+                    output = f"{stdout}\n[stderr]\n{stderr}" if stdout else stderr
+                if not output.strip():
+                    output = f"[no output] exit code {process.returncode}"
+
+                logger.debug(
+                    "PowerShell command completed: exit=%s stdout_chars=%s stderr_chars=%s returned_chars=%s",
+                    process.returncode,
+                    len(stdout),
+                    len(stderr),
+                    min(len(output), _max_output_chars()),
+                )
+                return (_clamp_output(output), process.returncode)
+            finally:
+                self._close_process_job(job)
         except subprocess.TimeoutExpired:
             return (f"Command execution timed out after {timeout} seconds", 1)
         except Exception as e:

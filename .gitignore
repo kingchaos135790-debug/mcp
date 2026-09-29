@@ -10,3 +10,10 @@ patch_stateless_fix.ps1
 _server_slice_*.txt
 _debug_*.py
 ripgrep-treesitter-qdrant-mcp/node_modules/
+
+# Local scratch / backup files
+*.bak
+*.bak-*
+windows-code-search-mcp/_tmp_*.py
+windows-code-search-mcp/managed-repositories.invalid-*.json
+windows-code-search-mcp/managed-repositories.json.bak-*
