@@ -136,6 +136,7 @@ node rankings rather than comparing scores from unrelated indexes.
 | --- | --- | --- |
 | `MCP_DEVICES_PATH` | adjacent `devices.json` | Gateway registry |
 | `MCP_NODE_SCHEMA_CACHE_PATH` | adjacent `node-schema-cache.json` | Persisted last-verified node identity/tool schemas |
+| `MCP_GATEWAY_MAX_RESULT_CHARS` | `24000` | Proxied tool-result character budget before schema-preserving truncation |
 | `MCP_SSH_EXE` | resolved system ssh | Absolute OpenSSH executable override |
 | `MCP_HEALTH_INTERVAL_SECONDS` | 15 | Background refresh interval per node |
 | `MCP_HEALTH_TIMEOUT_SECONDS` | 5 | Identity/schema refresh deadline |
@@ -143,11 +144,10 @@ node rankings rather than comparing scores from unrelated indexes.
 | `MCP_DISTRIBUTED_SEARCH_TIMEOUT_SECONDS` | 60 | Per-active-node aggregate search deadline |
 | `MCP_LOG_KEEP_COUNT` | 3 | Launcher log retention per role/type |
 
-Unreachable nodes do not block tool listing. Previously discovered schemas stay visible,
-and calls recover after the node returns. A node that has never connected has no known tool
-schemas: refresh the client's tool list after its first successful health check. Background
-schema-change notifications and persistent schema caching are not implemented. Restart the
-gateway after registry/policy changes.
+Unreachable nodes do not block tool listing. Persisted verified schemas stay visible across
+gateway restarts, and calls recover after the node returns. A node that has never connected has
+no known tool schemas until its first successful health/schema check. Contract-hash changes
+trigger schema refresh automatically. Restart the gateway after registry/policy changes.
 
 The gateway never retries a tool call automatically. A timeout or dropped connection can
 occur after an edit/shell operation succeeded; inspect the remote outcome before retrying.

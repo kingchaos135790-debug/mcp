@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 import json
+import os
 import ssl
 
 import httpx
@@ -10,6 +11,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.providers import Provider
 from fastmcp.server.providers.proxy import ProxyClient, ProxyTool
+from fastmcp.tools.tool import ToolResult
 from mcp.types import Tool
 
 from . import PROTOCOL_VERSION
@@ -81,7 +83,8 @@ class BoundedProxyTool(ProxyTool):
         try:
             async with asyncio.timeout(connection.call_timeout):
                 async with connection.slots:
-                    return await super().run(arguments, context)
+                    result = await super().run(arguments, context)
+                    return connection.clamp_tool_result(result)
         except Exception as exc:
             raise ToolError(
                 f"Device {connection.device.device_id}: {exc or type(exc).__name__}. "
@@ -105,6 +108,10 @@ class NodeConnection(Provider):
         self.device = device
         self.health_timeout = health_timeout
         self.call_timeout = call_timeout
+        try:
+            self.max_result_chars = max(4_000, int(os.getenv("MCP_GATEWAY_MAX_RESULT_CHARS", "24000")))
+        except ValueError:
+            self.max_result_chars = 24_000
         self.status = DeviceStatus()
         self._tools: dict[str, ProxyTool] = {}
         self._schemas: list[Tool] = []
@@ -114,6 +121,63 @@ class NodeConnection(Provider):
         self._refresh_lock = asyncio.Lock()
         self.slots = asyncio.Semaphore(8)
         self._restore_cached_schema()
+
+    @staticmethod
+    def _clip_text(value: str, budget: int) -> str:
+        if len(value) <= budget:
+            return value
+        suffix = f"\n... [MCP result truncated: {len(value) - budget} characters omitted]"
+        keep = max(0, budget - len(suffix))
+        return value[:keep] + suffix
+
+    @classmethod
+    def _compact_structured(cls, value, budget: int):
+        if budget < 64:
+            budget = 64
+        if isinstance(value, str):
+            return cls._clip_text(value, budget)
+        if isinstance(value, list):
+            if not value:
+                return []
+            limit = min(len(value), 32)
+            per_item = max(64, budget // limit)
+            return [cls._compact_structured(item, per_item) for item in value[:limit]]
+        if isinstance(value, dict):
+            if not value:
+                return {}
+            per_item = max(64, budget // len(value))
+            return {key: cls._compact_structured(item, per_item) for key, item in value.items()}
+        return value
+
+    def clamp_tool_result(self, result: ToolResult) -> ToolResult:
+        max_chars = self.max_result_chars
+        structured = result.structured_content
+        structured_size = 0
+        if structured is not None:
+            serialized = json.dumps(structured, ensure_ascii=False, default=str)
+            if len(serialized) > max_chars // 2:
+                structured = self._compact_structured(structured, max_chars // 2)
+                serialized = json.dumps(structured, ensure_ascii=False, default=str)
+            structured_size = len(serialized)
+
+        text_budget = max(1_000, max_chars - min(structured_size, max_chars - 1_000))
+        content = []
+        used = 0
+        for block in result.content:
+            if getattr(block, "type", "") != "text":
+                content.append(block)
+                continue
+            text = getattr(block, "text", "") or ""
+            remaining = max(0, text_budget - used)
+            if len(text) <= remaining:
+                content.append(block)
+                used += len(text)
+                continue
+            content.append(block.model_copy(update={"text": self._clip_text(text, remaining)}))
+            used = text_budget
+            break
+
+        return ToolResult(content=content, structured_content=structured, meta=result.meta)
 
     @property
     def health_url(self) -> str:

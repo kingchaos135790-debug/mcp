@@ -283,6 +283,19 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
             result = await client.call_tool("alpha_PowerShell", {"command": "recovered"})
             self.assertIn("recovered", result.content[0].text)
 
+    async def test_gateway_caps_oversized_tool_results(self):
+        self.a.max_result_chars = 4_000
+        await self.a.refresh()
+        _, mcp = await self.gateway()
+        async with Client(mcp) as client:
+            result = await client.call_tool("alpha_PowerShell", {"command": "x" * 10_000})
+            text = "".join(block.text for block in result.content if getattr(block, "type", "") == "text")
+            self.assertLessEqual(len(text), 4_000)
+            self.assertIn("MCP result truncated", text)
+            self.assertIn("result", result.structured_content)
+            self.assertLessEqual(len(result.structured_content["result"]), 2_000)
+            self.assertIn("MCP result truncated", result.structured_content["result"])
+
     async def test_late_node_discovery_and_restart(self):
         port = self.beta.port
         await self.beta.stop()
