@@ -62,9 +62,9 @@ account's SSH config/agent for IdentityFile/key selection.
 
 For `local`, the node is already on the gateway machine: set `host` to `127.0.0.1`, set
 `ssh_user` to a harmless local label such as `local`, and set `local_forward_port` equal to
-`remote_mcp_port`. No SSH process is created. This is the preferred way to expose the
-gateway PC's own shell, desktop and code-search runtime without SSHing back into itself.
-The gateway HTTP port must differ from every node/forwarded port.
+`remote_mcp_port`. No SSH process is created. The gateway requires exactly one enabled local
+node; it is the default host for direct tools when `device_id` is omitted. The gateway HTTP
+port must differ from every node/forwarded port.
 
 Do not place passwords, private keys or OAuth secrets in the device registry. Optional `allowed_tools` accepts an exact list such as:
 
@@ -106,18 +106,20 @@ installation directory; existing `WINDOWS_MCP_DIR`, `SEARCH_ENGINE_DIR`, `NODE_E
 `AUTO_INDEX_CONFIG_PATH` overrides remain available.
 
 The gateway persists each node's last verified identity and MCP tool schemas in
-`node-schema-cache.json` next to `devices.json` by default. Cached schemas are restored before
-network health checks, so a temporarily offline node keeps a stable namespaced tool surface
-across gateway restarts. Periodic monitoring uses the node's private `/__node_health` route and
-does not call `list_tools`; schema discovery runs only when the node's `tool_contract` hash
-changes, when no verified cache exists, or when an explicit schema refresh is requested.
-Set `MCP_NODE_SCHEMA_CACHE_PATH` to override the cache location.
+`node-schema-cache.json` next to `devices.json` by default. Cached host schemas are restored
+before network health checks, so the routed tool surface stays stable across gateway restarts.
+Periodic monitoring uses the node's private `/__node_health` route and does not call
+`list_tools`; schema discovery runs only when the node's `tool_contract` hash changes, when no
+verified cache exists, or when an explicit schema refresh is requested. Set
+`MCP_NODE_SCHEMA_CACHE_PATH` to override the cache location.
 
 ## Operation and limits
 
-The gateway exposes `list_devices`, `device_health` and `distributed_code_search`, plus
-names such as `laptop_PowerShell`, `laptop_hybrid_code_search` and
-`main_desktop_get_file_range`. Use the same namespace for a search result's file reads/edits.
+The gateway exposes `list_devices`, `device_health` and `distributed_code_search`, plus one
+copy of each direct host-node tool such as `PowerShell`, `hybrid_code_search` and
+`get_file_range`. Direct tools include an optional `device_id`: omit it to use the local host
+node, or set it explicitly to run the same tool on another configured PC. Device IDs are not
+expanded into duplicate tool names.
 
 ```json
 {
@@ -128,9 +130,10 @@ names such as `laptop_PowerShell`, `laptop_hybrid_code_search` and
 ```
 
 For a particular repository, add `"repo": {"deviceId": "laptop", "repoId": "actual-repo-id"}`.
-Get the ID from `laptop_list_indexed_repositories`. Repository names and paths can overlap
-across devices. Original scores and backend warnings are preserved; merge order interleaves
-node rankings rather than comparing scores from unrelated indexes.
+Get the remote repository ID by calling `list_indexed_repositories` with
+`{"device_id": "laptop"}`. Repository names and paths can overlap across devices. Original
+scores and backend warnings are preserved; merge order interleaves node rankings rather than
+comparing scores from unrelated indexes.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -140,14 +143,15 @@ node rankings rather than comparing scores from unrelated indexes.
 | `MCP_SSH_EXE` | resolved system ssh | Absolute OpenSSH executable override |
 | `MCP_HEALTH_INTERVAL_SECONDS` | 15 | Background refresh interval per node |
 | `MCP_HEALTH_TIMEOUT_SECONDS` | 5 | Identity/schema refresh deadline |
-| `MCP_NODE_CALL_TIMEOUT_SECONDS` | 600 | Overall namespaced call deadline |
+| `MCP_NODE_CALL_TIMEOUT_SECONDS` | 600 | Overall routed node call deadline |
 | `MCP_DISTRIBUTED_SEARCH_TIMEOUT_SECONDS` | 60 | Per-active-node aggregate search deadline |
 | `MCP_LOG_KEEP_COUNT` | 3 | Launcher log retention per role/type |
 
-Unreachable nodes do not block tool listing. Persisted verified schemas stay visible across
-gateway restarts, and calls recover after the node returns. A node that has never connected has
-no known tool schemas until its first successful health/schema check. Contract-hash changes
-trigger schema refresh automatically. Restart the gateway after registry/policy changes.
+Remote-node outages do not change the public direct-tool list because the local host schema is
+canonical. Persisted verified host schemas stay visible across gateway restarts, and calls
+recover after a node returns. If the host has never connected, direct tools remain unknown until
+its first successful health/schema check. Contract-hash changes trigger schema refresh
+automatically. Restart the gateway after registry/policy changes.
 
 The gateway never retries a tool call automatically. A timeout or dropped connection can
 occur after an edit/shell operation succeeded; inspect the remote outcome before retrying.
@@ -177,10 +181,10 @@ synthetic tool implementations and a fake tunnel supervisor; it does not provisi
 
 Before connecting the public gateway, check both physical nodes:
 
-1. `list_devices` and `device_health` report the expected IDs and local search readiness.
-2. Search a repository unique to each device through its namespaced search tool.
-3. Read a returned file through the same device's `get_file_range` tool.
-4. Run `hostname` through both namespaced PowerShell tools and compare the machines.
+1. `list_devices` reports the expected IDs; `device_health` with no arguments checks the local host.
+2. Search the host through `hybrid_code_search` with no `device_id`, then search a remote node with `device_id` set.
+3. Read a returned host file through `get_file_range`; for a remote result, pass that node's `device_id`.
+4. Run `PowerShell` with `hostname` once without `device_id` and once with the remote device ID; compare the machines.
 5. Stop/restart one node; the other remains usable, and the restarted node recovers.
 6. Run aggregate search during an outage and confirm results identify the reachable device.
 

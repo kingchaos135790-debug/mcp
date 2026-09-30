@@ -16,8 +16,6 @@ class DeviceRegistry:
         ports = [d.local_forward_port for d in devices]
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate device_id in registry")
-        if any(b.startswith(a + "_") for a in ids for b in ids if a != b):
-            raise ValueError("Device namespaces must not overlap (for example pc and pc_work)")
         if len(ports) != len(set(ports)):
             raise ValueError("Duplicate local_forward_port in registry")
 

@@ -16,6 +16,7 @@ from server_public import PublicServerMixin
 from .health import monitor_node
 from .node_connection import NodeConnection
 from .registry import DeviceRegistry
+from .routed_provider import RoutedNodeProvider
 from .search import search_devices
 from .schema_cache import NodeSchemaCache
 from .tunnel_manager import LocalEndpointManager, TunnelManager, resolve_ssh
@@ -47,6 +48,10 @@ class GatewayApp(PublicServerMixin):
         if schema_cache is None and config.devices_path:
             schema_cache = NodeSchemaCache.for_devices_path(config.devices_path)
         self.schema_cache = schema_cache
+        local_devices = [d for d in self.registry.enabled if d.transport == "local"]
+        if len(local_devices) != 1:
+            raise ValueError("Gateway routing requires exactly one enabled local device as the default host node")
+        self.host_device_id = local_devices[0].device_id
         self.connections = {
             d.device_id: connection_factory(
                 d,
@@ -67,13 +72,14 @@ class GatewayApp(PublicServerMixin):
     def build(self) -> FastMCP:
         from mcp_message_session import McpMessageSessionMiddleware
 
-        mcp = FastMCP(name="windows-code-search-gateway", lifespan=self.lifespan, auth=build_auth(self.config))
+        routed_nodes = RoutedNodeProvider(self.connections, self.host_device_id)
+        mcp = FastMCP(
+            name="windows-code-search-gateway",
+            lifespan=self.lifespan,
+            auth=build_auth(self.config),
+            providers=[routed_nodes],
+        )
         mcp.add_middleware(McpMessageSessionMiddleware())
-        for device_id, connection in self.connections.items():
-            # Mount immediately, even when offline. The provider serves verified
-            # schema snapshots and later discovery needs no gateway restart.
-            node = FastMCP(name=f"node-{device_id}", providers=[connection])
-            mcp.mount(node, namespace=device_id)
         self._register_discovery_routes(mcp)
         readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
 
@@ -83,12 +89,13 @@ class GatewayApp(PublicServerMixin):
             return [self.device_status(d.device_id) for d in self.registry.devices]
 
         @mcp.tool(annotations=readonly)
-        async def device_health(device_id: str) -> dict:
-            """Verify one device's identity/readiness; schemas refresh only if its contract changed."""
-            self.device_status(device_id)  # Validate before looking up a connection.
-            if device_id in self.connections:
-                await self.connections[device_id].check_health()
-            return self.device_status(device_id)
+        async def device_health(device_id: str | None = None) -> dict:
+            """Verify node identity/readiness. Omit device_id for the gateway host; set it for another PC."""
+            target_id = device_id or self.host_device_id
+            self.device_status(target_id)  # Validate before looking up a connection.
+            if target_id in self.connections:
+                await self.connections[target_id].check_health()
+            return self.device_status(target_id)
 
         @mcp.tool(annotations=readonly)
         async def distributed_code_search(query: str, device_ids: list[str] | None = None,

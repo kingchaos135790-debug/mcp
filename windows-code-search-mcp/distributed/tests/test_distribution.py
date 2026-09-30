@@ -27,7 +27,20 @@ from distributed.tunnel_manager import TunnelManager, tunnel_command
 
 
 def device(device_id="alpha", port=18101, **kwargs):
-    return DeviceConfig(device_id, device_id, "127.0.0.1", "user", port, **kwargs)
+    transport = kwargs.pop("transport", "ssh")
+    host = kwargs.pop("host", "127.0.0.1")
+    ssh_user = kwargs.pop("ssh_user", "local" if transport == "local" else "user")
+    remote_mcp_port = kwargs.pop("remote_mcp_port", port if transport == "local" else 18000)
+    return DeviceConfig(
+        device_id,
+        device_id,
+        host,
+        ssh_user,
+        port,
+        remote_mcp_port=remote_mcp_port,
+        transport=transport,
+        **kwargs,
+    )
 
 
 class RegistryTests(unittest.TestCase):
@@ -41,10 +54,10 @@ class RegistryTests(unittest.TestCase):
             self.assertNotIn("state", json.loads(path.read_text())["devices"][0])
 
     def test_reject_duplicates_bad_ports_and_ssh_injection(self):
-        for devices in ([device(), device()], [device(), device("beta")],
-                        [device(), device("alpha_work", 18102)]):
+        for devices in ([device(), device()], [device(), device("beta")]):
             with self.assertRaises(ValueError):
                 DeviceRegistry(devices)
+        DeviceRegistry([device(), device("alpha_work", 18102)])
         for changes in ({"local_forward_port": True}, {"remote_mcp_port": 0},
                         {"host": "-oProxyCommand=evil"}, {"ssh_user": "user@host"},
                         {"device_id": "Bad ID"}, {"enabled": "false"}, {"allowed_tools": "PowerShell"}):
@@ -229,7 +242,11 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.beta = await HttpNode("beta").start()
         self.addAsyncCleanup(self.alpha.stop)
         self.addAsyncCleanup(self.beta.stop)
-        self.a = NodeConnection(device("alpha", self.alpha.port), health_timeout=10, call_timeout=15)
+        self.a = NodeConnection(
+            device("alpha", self.alpha.port, transport="local"),
+            health_timeout=10,
+            call_timeout=15,
+        )
         self.b = NodeConnection(device("beta", self.beta.port), health_timeout=10, call_timeout=15)
         self.addAsyncCleanup(self.a.stop)
         self.addAsyncCleanup(self.b.stop)
@@ -250,14 +267,27 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
         app, mcp = await self.gateway()
         async with Client(mcp) as client:
             tools = {t.name: t for t in await client.list_tools()}
-            self.assertIn("alpha_PowerShell", tools)
-            self.assertIn("beta_hybrid_code_search", tools)
-            self.assertEqual(tools["alpha_PowerShell"].inputSchema["required"], ["command"])
-            for name in ("alpha", "beta"):
-                result = await client.call_tool(f"{name}_PowerShell", {"command": "hostname"})
-                self.assertIn(f"{name}:hostname", result.content[0].text)
-                result = await client.call_tool(f"{name}_get_file_range", {"path": "C:/repo/file.py"})
-                self.assertIn(name, result.content[0].text)
+            self.assertIn("PowerShell", tools)
+            self.assertIn("hybrid_code_search", tools)
+            self.assertNotIn("alpha_PowerShell", tools)
+            self.assertNotIn("beta_PowerShell", tools)
+            shell_schema = tools["PowerShell"].inputSchema
+            self.assertEqual(shell_schema["required"], ["command"])
+            self.assertIn("device_id", shell_schema["properties"])
+
+            result = await client.call_tool("PowerShell", {"command": "hostname"})
+            self.assertIn("alpha:hostname", result.content[0].text)
+            result = await client.call_tool("PowerShell", {"command": "hostname", "device_id": "beta"})
+            self.assertIn("beta:hostname", result.content[0].text)
+
+            result = await client.call_tool("get_file_range", {"path": "C:/repo/file.py"})
+            self.assertIn("alpha", result.content[0].text)
+            result = await client.call_tool(
+                "get_file_range",
+                {"path": "C:/repo/file.py", "device_id": "beta"},
+            )
+            self.assertIn("beta", result.content[0].text)
+
             result = await search_devices(app.connections, "query")
             self.assertEqual([h["deviceId"] for h in result["results"]], ["alpha", "beta"])
             self.assertTrue(all(h["score"] == 42 and h["repoId"] == "same-id" for h in result["results"]))
@@ -265,22 +295,33 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["nodeStatus"]["alpha"]["warnings"], ["test diagnostic"])
             aggregate = await client.call_tool("distributed_code_search", {"query": "query"})
             self.assertEqual(len(aggregate.structured_content["results"]), 2)
-            health = await client.call_tool("device_health", {"device_id": "alpha"})
-            self.assertEqual(health.structured_content["state"], "online")
+
+            health = await client.call_tool("device_health", {})
+            self.assertEqual(health.structured_content["identity"]["device_id"], "alpha")
+            remote_health = await client.call_tool("device_health", {"device_id": "beta"})
+            self.assertEqual(remote_health.structured_content["identity"]["device_id"], "beta")
+
             self.alpha.identity = "wrong-device"
             await self.a.refresh()
             self.assertEqual(self.a.status.state, "offline")
-            self.assertIn("beta_PowerShell", {t.name for t in await client.list_tools()})
+            self.assertIn("PowerShell", {t.name for t in await client.list_tools()})
             with self.assertRaises(Exception):
-                await client.call_tool("alpha_PowerShell", {"command": "must-not-run"})
+                await client.call_tool("PowerShell", {"command": "must-not-run"})
             self.assertEqual(self.alpha.calls, 1)
+
+            result = await client.call_tool(
+                "PowerShell",
+                {"command": "still-online", "device_id": "beta"},
+            )
+            self.assertIn("beta:still-online", result.content[0].text)
             result = await search_devices(app.connections, "query")
             self.assertTrue(result["partial"])
             self.assertEqual([h["deviceId"] for h in result["results"]], ["beta"])
+
             self.alpha.identity = "alpha"
             await self.a.refresh()
             self.assertEqual(self.a.status.state, "online")
-            result = await client.call_tool("alpha_PowerShell", {"command": "recovered"})
+            result = await client.call_tool("PowerShell", {"command": "recovered"})
             self.assertIn("recovered", result.content[0].text)
 
     async def test_gateway_caps_oversized_tool_results(self):
@@ -288,7 +329,7 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.a.refresh()
         _, mcp = await self.gateway()
         async with Client(mcp) as client:
-            result = await client.call_tool("alpha_PowerShell", {"command": "x" * 10_000})
+            result = await client.call_tool("PowerShell", {"command": "x" * 10_000})
             text = "".join(block.text for block in result.content if getattr(block, "type", "") == "text")
             self.assertLessEqual(len(text), 4_000)
             self.assertIn("MCP result truncated", text)
@@ -363,7 +404,7 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
         _, mcp = await self.gateway()
         async with Client(mcp) as client:
             with self.assertRaises(Exception):
-                await client.call_tool("alpha_PowerShell", {"command": "once"})
+                await client.call_tool("PowerShell", {"command": "once"})
         self.assertEqual(self.alpha.calls, 1)
 
     async def test_private_http_strips_credentials_and_preserves_chat_identity(self):

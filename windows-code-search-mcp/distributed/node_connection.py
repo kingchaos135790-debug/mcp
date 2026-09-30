@@ -208,11 +208,6 @@ class NodeConnection(Provider):
         for schema in schemas:
             if not self.device.permits(schema.name):
                 continue
-            public_name = f"{self.device.device_id}_{schema.name}"
-            if public_name in {"list_devices", "device_health", "distributed_code_search"}:
-                raise ValueError(f"Namespaced tool conflicts with gateway management: {public_name}")
-            if len(public_name) > 64:
-                raise ValueError(f"Namespaced tool exceeds 64 characters: {schema.name}")
             tool = BoundedProxyTool.from_mcp_tool(self.client, schema)
             tool._connection = self
             tools[schema.name] = tool
