@@ -17,6 +17,8 @@ from fastmcp.server.auth.auth import (
     RevocationOptions,
 )
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 
 def _normalize_scopes(scopes: Iterable[str] | None) -> list[str]:
@@ -103,6 +105,43 @@ class StaticClientOAuthProvider(InMemoryOAuthProvider):
                 "Static OAuth client requires OAUTH_CLIENT_SECRET unless "
                 "OAUTH_TOKEN_ENDPOINT_AUTH_METHOD=none"
             )
+
+    def _authorization_server_metadata(self) -> dict[str, object]:
+        base = str(self.base_url).rstrip("/")
+        methods = {self._token_endpoint_auth_method}
+        for client in self.clients.values():
+            method = getattr(client, "token_endpoint_auth_method", None)
+            if method:
+                methods.add(method)
+        preferred = ["none", "client_secret_post", "client_secret_basic"]
+        metadata: dict[str, object] = {
+            "issuer": str(self.base_url),
+            "authorization_endpoint": f"{base}/authorize",
+            "token_endpoint": f"{base}/token",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": [m for m in preferred if m in methods],
+            "code_challenge_methods_supported": ["S256"],
+        }
+        if self._valid_scopes:
+            metadata["scopes_supported"] = self._valid_scopes
+        if self.client_registration_options and self.client_registration_options.enabled:
+            metadata["registration_endpoint"] = f"{base}/register"
+        return metadata
+
+    def get_routes(self, mcp_path: str | None = None):
+        routes = super().get_routes(mcp_path)
+
+        async def metadata_endpoint(_request):
+            return JSONResponse(self._authorization_server_metadata())
+
+        replaced = []
+        for route in routes:
+            if isinstance(route, Route) and route.path == "/.well-known/oauth-authorization-server":
+                replaced.append(Route(route.path, endpoint=metadata_endpoint, methods=["GET", "OPTIONS"]))
+            else:
+                replaced.append(route)
+        return replaced
 
     def _build_static_client(self) -> OAuthClientInformationFull:
         payload: dict[str, object] = {
