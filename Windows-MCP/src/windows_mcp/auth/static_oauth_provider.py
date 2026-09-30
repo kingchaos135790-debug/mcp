@@ -50,7 +50,7 @@ class StaticClientOAuthProvider(InMemoryOAuthProvider):
         required_scopes = _normalize_scopes(required_scopes)
 
         client_registration_options = (
-            ClientRegistrationOptions(valid_scopes=valid_scopes or None)
+            ClientRegistrationOptions(enabled=True, valid_scopes=valid_scopes or None)
             if allow_dynamic_client_registration
             else None
         )
