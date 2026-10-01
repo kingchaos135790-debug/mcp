@@ -1,6 +1,7 @@
 """PowerShell tool — shell/command execution."""
 
 import asyncio
+import os
 import threading
 
 from mcp.types import ToolAnnotations
@@ -8,14 +9,60 @@ from windows_mcp.analytics import with_analytics
 from fastmcp import Context
 
 
-async def _execute_command_cancellable(desktop, command: str, timeout: int):
+_CONNECTOR_SAFE_TIMEOUT_ENV = "WINDOWS_MCP_CONNECTOR_SAFE_TIMEOUT_SECONDS"
+_DEFAULT_CONNECTOR_SAFE_TIMEOUT_SECONDS = 90
+_ACTIVE_SHELL_REQUESTS: dict[str, threading.Event] = {}
+_ACTIVE_SHELL_REQUESTS_LOCK = threading.Lock()
+
+
+def _register_shell_request(request_id: str, cancel_event: threading.Event) -> None:
+    with _ACTIVE_SHELL_REQUESTS_LOCK:
+        _ACTIVE_SHELL_REQUESTS[request_id] = cancel_event
+
+
+def _unregister_shell_request(request_id: str, cancel_event: threading.Event) -> None:
+    with _ACTIVE_SHELL_REQUESTS_LOCK:
+        if _ACTIVE_SHELL_REQUESTS.get(request_id) is cancel_event:
+            _ACTIVE_SHELL_REQUESTS.pop(request_id, None)
+
+
+def cancel_shell_request(request_id: str) -> bool:
+    with _ACTIVE_SHELL_REQUESTS_LOCK:
+        cancel_event = _ACTIVE_SHELL_REQUESTS.get(str(request_id))
+    if cancel_event is None:
+        return False
+    cancel_event.set()
+    return True
+
+
+def _connector_safe_timeout(timeout: int) -> int:
+    """Bound shell lifetime below the outer connector request window."""
+    try:
+        cap = int(os.getenv(
+            _CONNECTOR_SAFE_TIMEOUT_ENV,
+            str(_DEFAULT_CONNECTOR_SAFE_TIMEOUT_SECONDS),
+        ))
+    except ValueError:
+        cap = _DEFAULT_CONNECTOR_SAFE_TIMEOUT_SECONDS
+    if cap <= 0:
+        cap = _DEFAULT_CONNECTOR_SAFE_TIMEOUT_SECONDS
+    return min(max(0, int(timeout)), cap)
+
+
+async def _execute_command_cancellable(
+    desktop,
+    command: str,
+    timeout: int,
+    cancel_event: threading.Event | None = None,
+):
     """Run a shell command while keeping cancellation tied to the subprocess lifetime."""
-    cancel_event = threading.Event()
+    cancel_event = cancel_event or threading.Event()
+    effective_timeout = _connector_safe_timeout(timeout)
     worker = asyncio.create_task(
         asyncio.to_thread(
             desktop.execute_command,
             command,
-            timeout,
+            effective_timeout,
             cancel_event,
         )
     )

@@ -125,3 +125,34 @@ async def test_shell_cancellation_waits_for_worker_cleanup():
         await task
 
     assert desktop.cleaned_up.is_set()
+
+
+class TimeoutRecordingDesktop:
+    def __init__(self):
+        self.timeouts = []
+
+    def execute_command(self, command, timeout, cancel_event=None):
+        self.timeouts.append(timeout)
+        return "ok", 0
+
+
+@pytest.mark.asyncio
+async def test_shell_timeout_is_capped_below_connector_window(monkeypatch):
+    monkeypatch.setenv("WINDOWS_MCP_CONNECTOR_SAFE_TIMEOUT_SECONDS", "90")
+    desktop = TimeoutRecordingDesktop()
+
+    result = await _execute_command_cancellable(desktop, "Start-Sleep 180", 180)
+
+    assert result == ("ok", 0)
+    assert desktop.timeouts == [90]
+
+
+@pytest.mark.asyncio
+async def test_shell_timeout_below_cap_is_unchanged(monkeypatch):
+    monkeypatch.setenv("WINDOWS_MCP_CONNECTOR_SAFE_TIMEOUT_SECONDS", "90")
+    desktop = TimeoutRecordingDesktop()
+
+    result = await _execute_command_cancellable(desktop, "hostname", 30)
+
+    assert result == ("ok", 0)
+    assert desktop.timeouts == [30]
