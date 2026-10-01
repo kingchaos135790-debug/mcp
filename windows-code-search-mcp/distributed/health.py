@@ -59,6 +59,32 @@ def register_node_health(mcp, context) -> None:
     async def node_health_http(_: Request) -> Response:
         return JSONResponse(await payload())
 
+    @mcp.custom_route("/__cancel_request", methods=["POST"], include_in_schema=False)
+    async def cancel_request_http(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"cancelled": False, "error": "invalid_json"},
+                status_code=400,
+            )
+
+        request_id = str(body.get("request_id") or "").strip()
+        if not request_id:
+            return JSONResponse(
+                {"cancelled": False, "error": "missing_request_id"},
+                status_code=400,
+            )
+
+        from windows_mcp.tools.shell import cancel_shell_request
+
+        return JSONResponse(
+            {
+                "request_id": request_id,
+                "cancelled": cancel_shell_request(request_id),
+            }
+        )
+
 
 async def monitor_node(connection, interval: float) -> None:
     while True:

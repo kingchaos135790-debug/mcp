@@ -164,6 +164,10 @@ class HttpNode:
         self.slow = False
         self.headers = []
         self.list_tools_calls = 0
+        self.power_shell_started = asyncio.Event()
+        self.power_shell_cancelled = asyncio.Event()
+        self.power_shell_cancel_signal = asyncio.Event()
+        self.cancel_request_ids = []
         self.tool_contract = "contract-v1"
         self.port = port
         self.mcp = FastMCP(identity)
@@ -182,9 +186,22 @@ class HttpNode:
         async def node_health_http(_):
             return JSONResponse(health_payload())
 
+        @self.mcp.custom_route("/__cancel_request", methods=["POST"], include_in_schema=False)
+        async def cancel_request_http(request):
+            payload = await request.json()
+            request_id = str(payload.get("request_id") or "")
+            self.cancel_request_ids.append(request_id)
+            self.power_shell_cancel_signal.set()
+            return JSONResponse({"request_id": request_id, "cancelled": True})
+
         @self.mcp.tool()
-        def PowerShell(command: str) -> str:
+        async def PowerShell(command: str) -> str:
             self.calls += 1
+            if command == "slow":
+                self.power_shell_started.set()
+                await self.power_shell_cancel_signal.wait()
+                self.power_shell_cancelled.set()
+                return f"{self.identity}:cancelled"
             if self.fail:
                 raise ValueError("failed after execution")
             return f"{self.identity}:{command}"
@@ -323,6 +340,42 @@ class GatewayIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.a.status.state, "online")
             result = await client.call_tool("PowerShell", {"command": "recovered"})
             self.assertIn("recovered", result.content[0].text)
+
+    async def test_cancelled_node_client_call_cancels_node_tool(self):
+        await self.a.refresh()
+        async with self.a.client() as client:
+            call = asyncio.create_task(
+                client.call_tool("PowerShell", {"command": "slow"})
+            )
+            async with asyncio.timeout(3):
+                await self.alpha.power_shell_started.wait()
+
+            call.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await call
+
+            async with asyncio.timeout(3):
+                await self.alpha.power_shell_cancelled.wait()
+
+        self.assertTrue(self.alpha.cancel_request_ids)
+        self.assertTrue(all(self.alpha.cancel_request_ids))
+
+    async def test_gateway_call_timeout_cancels_node_tool(self):
+        self.a.call_timeout = 2.0
+        await self.a.refresh()
+        _, mcp = await self.gateway()
+        async with Client(mcp) as client:
+            call = asyncio.create_task(
+                client.call_tool("PowerShell", {"command": "slow"})
+            )
+            async with asyncio.timeout(3):
+                await self.alpha.power_shell_started.wait()
+
+            with self.assertRaises(Exception):
+                await call
+
+            async with asyncio.timeout(3):
+                await self.alpha.power_shell_cancelled.wait()
 
     async def test_gateway_caps_oversized_tool_results(self):
         self.a.max_result_chars = 4_000

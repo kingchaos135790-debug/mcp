@@ -60,10 +60,18 @@ def validate_identity(identity, expected_device: str) -> dict:
 
 
 class VerifiedNodeClient(ProxyClient):
-    def __init__(self, *args, expected_device: str, health_timeout: float, **kwargs):
+    def __init__(
+        self,
+        *args,
+        expected_device: str,
+        health_timeout: float,
+        cancellation_callback=None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.expected_device = expected_device
         self.health_timeout = health_timeout
+        self.cancellation_callback = cancellation_callback
         self.identity: dict = {}
 
     async def __aenter__(self):
@@ -74,6 +82,41 @@ class VerifiedNodeClient(ProxyClient):
             return self
         except BaseException as exc:
             await super().__aexit__(type(exc), exc, exc.__traceback__)
+            raise
+
+    async def _cancel_inflight_request(self, request_id, reason: str) -> None:
+        if request_id is None or self.cancellation_callback is None:
+            return
+        cancel_task = asyncio.create_task(
+            self.cancellation_callback(str(request_id), reason)
+        )
+        try:
+            await asyncio.wait_for(asyncio.shield(cancel_task), timeout=2)
+        except (Exception, asyncio.CancelledError):
+            cancel_task.cancel()
+
+    async def call_tool_mcp(
+        self,
+        name,
+        arguments,
+        progress_handler=None,
+        timeout=None,
+        meta=None,
+    ):
+        request_id = getattr(self.session, "_request_id", None)
+        try:
+            return await super().call_tool_mcp(
+                name,
+                arguments,
+                progress_handler=progress_handler,
+                timeout=timeout,
+                meta=meta,
+            )
+        except asyncio.CancelledError:
+            await self._cancel_inflight_request(
+                request_id,
+                f"Gateway cancelled tools/call {name}",
+            )
             raise
 
 
@@ -184,6 +227,25 @@ class NodeConnection(Provider):
         base = self.device.url.removesuffix("/mcp")
         return f"{base}/__node_health"
 
+    @property
+    def cancel_url(self) -> str:
+        base = self.device.url.removesuffix("/mcp")
+        return f"{base}/__cancel_request"
+
+    async def cancel_request(self, request_id: str, reason: str = "") -> bool:
+        timeout = min(max(float(self.health_timeout), 1.0), 5.0)
+        try:
+            async with private_http_client(headers=self._headers(), timeout=timeout) as client:
+                response = await client.post(
+                    self.cancel_url,
+                    json={"request_id": str(request_id), "reason": reason},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                return bool(payload.get("cancelled"))
+        except Exception:
+            return False
+
     def _headers(self) -> dict[str, str]:
         from session_context import get_current_chat_session_id
 
@@ -229,6 +291,7 @@ class NodeConnection(Provider):
             self._transport(),
             expected_device=self.device.device_id,
             health_timeout=self.health_timeout,
+            cancellation_callback=self.cancel_request,
             init_timeout=self.health_timeout,
             timeout=timeout or self.call_timeout,
         )

@@ -10,20 +10,22 @@ from fastmcp import Context
 
 
 _CONNECTOR_SAFE_TIMEOUT_ENV = "WINDOWS_MCP_CONNECTOR_SAFE_TIMEOUT_SECONDS"
-_DEFAULT_CONNECTOR_SAFE_TIMEOUT_SECONDS = 90
+_DEFAULT_CONNECTOR_SAFE_TIMEOUT_SECONDS = 45
 _ACTIVE_SHELL_REQUESTS: dict[str, threading.Event] = {}
 _ACTIVE_SHELL_REQUESTS_LOCK = threading.Lock()
 
 
 def _register_shell_request(request_id: str, cancel_event: threading.Event) -> None:
+    key = str(request_id)
     with _ACTIVE_SHELL_REQUESTS_LOCK:
-        _ACTIVE_SHELL_REQUESTS[request_id] = cancel_event
+        _ACTIVE_SHELL_REQUESTS[key] = cancel_event
 
 
 def _unregister_shell_request(request_id: str, cancel_event: threading.Event) -> None:
+    key = str(request_id)
     with _ACTIVE_SHELL_REQUESTS_LOCK:
-        if _ACTIVE_SHELL_REQUESTS.get(request_id) is cancel_event:
-            _ACTIVE_SHELL_REQUESTS.pop(request_id, None)
+        if _ACTIVE_SHELL_REQUESTS.get(key) is cancel_event:
+            _ACTIVE_SHELL_REQUESTS.pop(key, None)
 
 
 def cancel_shell_request(request_id: str) -> bool:
@@ -94,14 +96,23 @@ def register(mcp, *, get_desktop, get_analytics):
     )
     @with_analytics(get_analytics(), "Powershell-Tool")
     async def powershell_tool(command: str, timeout: int = 30, ctx: Context = None) -> str:
+        cancel_event = threading.Event()
+        request_id = None
+        if ctx is not None and getattr(ctx, "request_context", None) is not None:
+            request_id = ctx.request_id
+            _register_shell_request(request_id, cancel_event)
         try:
             response, status_code = await _execute_command_cancellable(
                 get_desktop(),
                 command,
                 timeout,
+                cancel_event,
             )
             return f"Response: {response}\nStatus Code: {status_code}"
         except asyncio.CancelledError:
             raise
         except Exception as e:
             return f"Error executing command: {str(e)}\nStatus Code: 1"
+        finally:
+            if request_id is not None:
+                _unregister_shell_request(request_id, cancel_event)

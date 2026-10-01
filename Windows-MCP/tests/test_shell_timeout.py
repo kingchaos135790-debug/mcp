@@ -6,7 +6,12 @@ import pytest
 
 import windows_mcp.desktop.service as service_module
 from windows_mcp.desktop.service import Desktop
-from windows_mcp.tools.shell import _execute_command_cancellable
+from windows_mcp.tools.shell import (
+    _execute_command_cancellable,
+    _register_shell_request,
+    _unregister_shell_request,
+    cancel_shell_request,
+)
 
 
 class FakeTimedOutProcess:
@@ -54,6 +59,19 @@ class FakeProcess:
 
     def kill(self):
         self.killed = True
+
+
+def test_cancel_shell_request_sets_registered_event():
+    cancel_event = threading.Event()
+    request_id = 42
+    _register_shell_request(request_id, cancel_event)
+    try:
+        assert cancel_shell_request(str(request_id))
+        assert cancel_event.is_set()
+    finally:
+        _unregister_shell_request(request_id, cancel_event)
+
+    assert not cancel_shell_request(str(request_id))
 
 
 def test_kill_process_tree_finds_children_after_parent_exit(monkeypatch):
