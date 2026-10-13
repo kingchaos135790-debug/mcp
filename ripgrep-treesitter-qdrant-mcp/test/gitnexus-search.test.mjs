@@ -110,6 +110,73 @@ test('index/search/cleanup use GitNexus without a vector service; errors retain 
   }
 });
 
+test('FTS repair failures trigger one forced rebuild and retain both errors if it fails', async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-gitnexus-fts-'));
+  const prior = { ...process.env };
+  try {
+    const root = path.join(temp, 'repo');
+    await fs.mkdir(root);
+    const log = path.join(temp, 'calls.jsonl');
+    const cli = path.join(temp, 'fake-cli.mjs');
+    await fs.writeFile(cli, `import fs from 'node:fs'; import path from 'node:path';
+      const args = process.argv.slice(2);
+      fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+      if (args[0] !== 'analyze') process.exit(0);
+      const isForce = args.includes('--force');
+      if (args.includes('--repair-fts') || (isForce && process.env.FTS_TEST_FORCE_FAIL)) {
+        console.error(isForce ? 'forced graph rebuild failed' : 'FTS repair failed: missing indexes');
+        process.exit(1);
+      }
+      const name = args[args.indexOf('--name') + 1];
+      const storagePath = path.join(process.env.GITNEXUS_STORAGE_ROOT, name);
+      fs.mkdirSync(storagePath, {recursive: true});
+      fs.mkdirSync(process.env.GITNEXUS_HOME, {recursive: true});
+      fs.writeFileSync(path.join(process.env.GITNEXUS_HOME, 'registry.json'),
+        JSON.stringify([{name, storagePath}]));
+      fs.writeFileSync(path.join(storagePath, 'meta.json'), JSON.stringify({
+        indexedAt: new Date().toISOString(), stats: {embeddings: 0},
+        capabilities: {fts: {status: isForce && !process.env.FTS_TEST_FORCE_UNAVAILABLE ? 'available' : 'unavailable'}}
+      }));
+    `);
+    process.env.INDEX_ROOT = path.join(temp, 'index');
+    process.env.GITNEXUS_CLI_PATH = cli;
+    process.env.GITNEXUS_NODE_EXE = process.execPath;
+    const { analyzeGitNexus } = await import('../dist/lib/gitnexus-utils.js');
+    const success = await analyzeGitNexus(root, 'fts-repo', false);
+    assert.equal(success.embeddings, false);
+    let calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(calls.length, 3);
+    assert.ok(calls[1].includes('--repair-fts'));
+    assert.ok(calls[2].includes('--force'));
+    assert.ok(!calls[2].includes('--repair-fts'));
+
+    await fs.writeFile(log, '');
+    process.env.FTS_TEST_FORCE_FAIL = '1';
+    await assert.rejects(() => analyzeGitNexus(root, 'fts-repo', false), error => {
+      assert.equal(error.name, 'AggregateError');
+      assert.equal(error.errors.length, 2);
+      assert.match(error.message, /FTS repair failed/);
+      assert.match(error.message, /forced graph rebuild failed/);
+      assert.match(error.errors[0].message, /FTS repair failed/);
+      assert.match(error.errors[1].message, /forced graph rebuild failed/);
+      return true;
+    });
+    calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(calls.filter(args => args.includes('--force')).length, 1);
+
+    await fs.writeFile(log, '');
+    delete process.env.FTS_TEST_FORCE_FAIL;
+    process.env.FTS_TEST_FORCE_UNAVAILABLE = '1';
+    await assert.rejects(() => analyzeGitNexus(root, 'fts-repo', true), /FTS repair failed/);
+    calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(calls.filter(args => args.includes('--force')).length, 1);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in prior)) delete process.env[key];
+    Object.assign(process.env, prior);
+    await fs.rm(temp, {recursive: true, force: true});
+  }
+});
+
 test('CLI timeout is reported instead of hanging', async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-gitnexus-timeout-'));
   const priorCli = process.env.GITNEXUS_CLI_PATH;

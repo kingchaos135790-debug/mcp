@@ -171,8 +171,32 @@ export async function analyzeGitNexus(repoRoot: string, repoId: string, force: b
   await runGitNexus(args, 1_800_000);
   let meta = await readGraphMetadata(repoId);
   if (meta.capabilities?.fts?.status !== "available") {
-    await runGitNexus([...args.filter(arg => arg !== "--force"), "--repair-fts"], 300_000);
-    meta = await readGraphMetadata(repoId);
+    let repairError: unknown;
+    try {
+      await runGitNexus([...args.filter(arg => arg !== "--force"), "--repair-fts"], 300_000);
+      meta = await readGraphMetadata(repoId);
+    } catch (error) {
+      repairError = error;
+    }
+    // GitNexus can leave missing FTS indexes after an incremental update, even
+    // when --repair-fts runs. Escalate once to a full staged graph+FTS rebuild;
+    // do not repeat a forced rebuild that already failed earlier in this call.
+    if (meta.capabilities?.fts?.status !== "available" && !args.includes("--force")) {
+      try {
+        await runGitNexus([...args, "--force"], 1_800_000);
+        meta = await readGraphMetadata(repoId);
+      } catch (error) {
+        throw new AggregateError(
+          repairError === undefined ? [error] : [repairError, error],
+          "GitNexus FTS recovery failed: full graph+FTS rebuild did not complete. " +
+            (repairError === undefined ? "" : `Repair: ${String(repairError)}; `) +
+            `Rebuild: ${String(error)}`,
+        );
+      }
+    }
+    if (meta.capabilities?.fts?.status !== "available" && repairError !== undefined) {
+      throw repairError;
+    }
   }
   if (meta.capabilities?.fts?.status !== "available" || !meta.stats || meta.stats.embeddings !== 0) {
     throw new Error("GitNexus graph is not search-ready: full-text indexes must be available and embeddings must be disabled.");
