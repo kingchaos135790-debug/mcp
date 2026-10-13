@@ -47,6 +47,30 @@ Both root launchers read their shared paths from `mcp.paths.env`. Create it with
 The local config is ignored by Git, so the server and repository manager always
 use the same index location. Keep the index directory outside watched repositories.
 
+## Optional MCP keepalive
+
+`mcp_keepalive.ps1` monitors the local MCP listener and the configured Cloudflare
+tunnel. It is deliberately **non-destructive**: it never terminates an existing
+service after an HTTP failure. If a listener or a matching tunnel already exists,
+it logs the failure for investigation rather than risking downtime or duplicates.
+
+A missing service may be launched only after checking the exact server script,
+TCP port, configured tunnel name, existing launcher processes, and a five-minute
+post-launch cooldown. One named mutex permits only one watchdog instance.
+If Windows process or socket inspection fails, no recovery launch occurs.
+
+Start it independently after configuring the local launchers:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\mcp_keepalive.ps1
+```
+
+Logs are written to `logs/mcp-keepalive.log`. Run its offline safety tests with
+`Invoke-Pester .\tests\mcp_keepalive.Tests.ps1` (PowerShell 5.1, Pester 3.4+).
+To apply edits to an already-running watchdog, restart only the watchdog process,
+not the MCP server or Cloudflare tunnel. A permanently hung service still needs
+manual intervention; this watchdog will not kill a running process.
+
 ## Local secrets
 
 Do not put OAuth client secrets directly in tracked launcher scripts.
