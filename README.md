@@ -49,27 +49,42 @@ use the same index location. Keep the index directory outside watched repositori
 
 ## Optional MCP keepalive
 
-`mcp_keepalive.ps1` monitors the local MCP listener and the configured Cloudflare
-tunnel. It is deliberately **non-destructive**: it never terminates an existing
+`mcp_keepalive.ps1` monitors the gateway, its configured local node, and the Cloudflare
+tunnel **while the gateway launcher terminal is open**. When that launcher closes,
+the watchdog exits rather than bringing the gateway back. It is deliberately
+**non-destructive**: it never terminates an existing
 service after an HTTP failure. If a listener or a matching tunnel already exists,
 it logs the failure for investigation rather than risking downtime or duplicates.
 
-A missing service may be launched only after checking the exact server script,
+A missing node or tunnel may be launched only after checking the exact server script,
 TCP port, configured tunnel name, existing launcher processes, and a five-minute
 post-launch cooldown. One named mutex permits only one watchdog instance.
 If Windows process or socket inspection fails, no recovery launch occurs.
+The local node is read from `windows-code-search-mcp/devices.json` and launched
+through `launch_local_node.bat` with the shared paths in `mcp.paths.env`.
 
-Start it independently after configuring the local launchers:
+The desktop `launch mcp.bat` starts the gateway, tunnel, and watchdog together.
+The watchdog stops automatically when the gateway terminal closes. When launching
+the gateway without the desktop batch file, start the watchdog after the launcher:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\mcp_keepalive.ps1
 ```
 
-Logs are written to `logs/mcp-keepalive.log`. Run its offline safety tests with
-`Invoke-Pester .\tests\mcp_keepalive.Tests.ps1` (PowerShell 5.1, Pester 3.4+).
+Logs are written to `logs/mcp-keepalive.log`. Repeated failures include the
+HTTP status or transport error category, probe latency, consecutive failure count,
+listening addresses/owner PIDs, and matching server PIDs; recoveries record duration.
+These diagnostics exclude URLs, raw error messages, headers, and response bodies.
+The gateway probes `GET /`: an HTTP 404 still means HTTP is reachable, **not**
+that MCP tool calls are functional. Compare timestamps with `logs/cloudflare-*.log`
+(Cloudflare uses UTC; keepalive uses local time).
+Run offline safety tests with `Invoke-Pester .\tests\mcp_keepalive.Tests.ps1`
+(PowerShell 5.1, Pester 3.4+).
 To apply edits to an already-running watchdog, restart only the watchdog process,
-not the MCP server or Cloudflare tunnel. A permanently hung service still needs
-manual intervention; this watchdog will not kill a running process.
+not the MCP server or Cloudflare tunnel. Closing the gateway launcher also stops
+the watchdog within one monitoring cycle; to resume monitoring, start it again
+after opening a new gateway launcher terminal. A permanently hung service still
+needs manual intervention; this watchdog will not kill a running process.
 
 ## Local secrets
 

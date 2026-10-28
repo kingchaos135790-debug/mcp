@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import bootstrap  # noqa: F401
 from fastmcp import Client, FastMCP
+from mcp.types import Tool
 from fastmcp.client.transports import StreamableHttpTransport
 import uvicorn
 
@@ -41,6 +42,19 @@ def device(device_id="alpha", port=18101, **kwargs):
         transport=transport,
         **kwargs,
     )
+
+
+class NodeSchemaCacheTests(unittest.TestCase):
+    def test_unchanged_schema_is_not_rewritten(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = NodeSchemaCache(Path(folder) / "node-schema-cache.json")
+            tools = [Tool(name="PowerShell", inputSchema={"type": "object"})]
+            with patch("distributed.schema_cache.os.replace", wraps=os.replace) as replace:
+                cache.save("alpha", {"device_id": "alpha"}, tools, "contract-v1")
+                cache.save("alpha", {"device_id": "alpha"}, tools, "contract-v1")
+                self.assertEqual(replace.call_count, 1)
+                cache.save("alpha", {"device_id": "alpha"}, tools, "contract-v2")
+                self.assertEqual(replace.call_count, 2)
 
 
 class RegistryTests(unittest.TestCase):

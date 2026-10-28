@@ -56,7 +56,7 @@ class NodeSchemaCache:
 
     def save(self, device_id: str, identity: dict, schemas: Iterable[Tool], tool_contract: str) -> None:
         payload = self._read()
-        payload["devices"][device_id] = {
+        entry = {
             "identity": identity,
             "tool_contract": tool_contract,
             "tools": [
@@ -64,6 +64,10 @@ class NodeSchemaCache:
                 for schema in schemas
             ],
         }
+        # Avoid filesystem events on unchanged periodic health checks.
+        if payload["devices"].get(device_id) == entry and self.path.is_file():
+            return
+        payload["devices"][device_id] = entry
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(self.path.suffix + ".tmp")
         temp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

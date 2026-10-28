@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 
 from watchfiles import awatch
 
@@ -262,6 +263,8 @@ class RepositoryAutoIndexer:
 
     async def _watch_loop(self, watch_roots: list[str]) -> None:
         logger.info("Watching repositories for changes: %s", ", ".join(watch_roots))
+        failure_counts: dict[str, int] = {}
+        retry_after: dict[str, float] = {}
         try:
             async for changes in awatch(
                 *watch_roots,
@@ -277,6 +280,8 @@ class RepositoryAutoIndexer:
                             affected_roots.add(repo_root)
 
                 for repo_root in sorted(affected_roots):
+                    if time.monotonic() < retry_after.get(repo_root, 0):
+                        continue
                     try:
                         logger.info("Detected file changes in %s; running incremental reindex", repo_root)
                         repository = next((item for item in await self.load_repositories() if item.repo_root == repo_root), None)
@@ -286,7 +291,14 @@ class RepositoryAutoIndexer:
                             options=_repository_index_options(repository) if repository is not None else None,
                         )
                     except Exception:
-                        logger.exception("Automatic reindex failed for %s", repo_root)
+                        failures = failure_counts.get(repo_root, 0) + 1
+                        failure_counts[repo_root] = failures
+                        delay = min(900, 30 * (2 ** min(failures - 1, 5)))
+                        retry_after[repo_root] = time.monotonic() + delay
+                        logger.exception("Automatic reindex failed for %s; retry after %ds", repo_root, delay)
+                    else:
+                        failure_counts.pop(repo_root, None)
+                        retry_after.pop(repo_root, None)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -303,7 +315,16 @@ class RepositoryAutoIndexer:
         )
         if any(candidate.is_relative_to(directory) for directory in ignored_directories):
             return True
-        ignored_files = [self.config.managed_repositories_path, getattr(self.config, "oauth_state_path", "")]
+        devices_path = getattr(self.config, "devices_path", "") or self.config.managed_repositories_path
+        schema_cache = os.getenv("MCP_NODE_SCHEMA_CACHE_PATH", "").strip()
+        if not schema_cache:
+            schema_cache = str(Path(devices_path).with_name("node-schema-cache.json"))
+        ignored_files = [
+            self.config.managed_repositories_path,
+            getattr(self.config, "oauth_state_path", ""),
+            schema_cache,
+            schema_cache + ".tmp",
+        ]
         return any(candidate == Path(filename).resolve() for filename in ignored_files if filename)
 
     async def run_startup_indexing(self) -> None:

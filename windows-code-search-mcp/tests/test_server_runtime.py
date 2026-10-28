@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 import asyncio
 import json
 import subprocess
@@ -141,7 +141,39 @@ class RepositoryAutoIndexerTests(unittest.TestCase):
             self.assertTrue(self.indexer._is_runtime_artifact(str(root / "logs" / "runtime.log")))
             self.assertTrue(self.indexer._is_runtime_artifact(str(self.config_path)))
             self.assertTrue(self.indexer._is_runtime_artifact(str(root / ".gitnexus" / "meta.json")))
+            self.assertTrue(self.indexer._is_runtime_artifact(str(root / "node-schema-cache.json")))
+            self.assertTrue(self.indexer._is_runtime_artifact(str(root / "node-schema-cache.json.tmp")))
             self.assertFalse(self.indexer._is_runtime_artifact(str(root / "src" / "app.py")))
+
+        custom_cache = root / "cache" / "custom-schema.json"
+        with patch.dict("os.environ", {"MCP_NODE_SCHEMA_CACHE_PATH": str(custom_cache)}):
+            self.assertTrue(self.indexer._is_runtime_artifact(str(custom_cache)))
+            self.assertTrue(self.indexer._is_runtime_artifact(str(custom_cache) + ".tmp"))
+
+    def test_watch_failures_back_off_and_do_not_retry_every_change(self) -> None:
+        root = Path(self.tempdir.name)
+        clock = [0.0]
+        attempts = []
+
+        async def emit_changes(*_args, **_kwargs):
+            for tick in (0, 1, 29, 30, 31, 89, 90, 91, 210):
+                clock[0] = float(tick)
+                yield {(1, str(root / "src" / "changed.py"))}
+
+        async def failing_index(*_args, **_kwargs):
+            attempts.append(clock[0])
+            raise RuntimeError("simulated index failure")
+
+        with (
+            patch("runtime.repository_auto_indexer.awatch", new=emit_changes),
+            patch("runtime.repository_auto_indexer.time.monotonic", side_effect=lambda: clock[0]),
+            patch.object(self.indexer, "load_repositories", new=AsyncMock(return_value=[])),
+            patch.object(self.indexer, "run_index", side_effect=failing_index),
+            self.assertLogs("server_runtime", level="ERROR"),
+        ):
+            asyncio.run(self.indexer._watch_loop([str(root)]))
+
+        self.assertEqual(attempts, [0.0, 30.0, 90.0, 210.0])
 
     def test_load_repositories_repairs_empty_config(self) -> None:
         self.config_path.write_text("", encoding="utf-8")
